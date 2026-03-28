@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   formatUserContext,
   getConnectionExplanation,
@@ -6,14 +6,9 @@ import {
   getConnectionIdentityStatus,
   getConnectionRiskLabel
 } from "../lib/connectionPresentation";
-import { executeConnectionCommand, getAlertTimeline } from "../lib/tauri";
-import type {
-  AlertRecord,
-  AlertTimelineEvent,
-  CommandExecutionResult,
-  ConnectionCommandAction,
-  ConnectionEvent
-} from "../types";
+import { useAlertTimeline } from "../hooks/useAlertTimeline";
+import { useConnectionCommandRunner } from "../hooks/useConnectionCommandRunner";
+import type { AlertRecord, ConnectionCommandAction, ConnectionEvent } from "../types";
 
 interface DetailPanelProps {
   connection: ConnectionEvent | null;
@@ -39,60 +34,14 @@ export function DetailPanel({
   onCopyCommand,
   onClose
 }: DetailPanelProps) {
-  const [commandResult, setCommandResult] = useState<CommandExecutionResult | null>(null);
-  const [commandError, setCommandError] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<ConnectionCommandAction | null>(null);
-  const [alertTimeline, setAlertTimeline] = useState<AlertTimelineEvent[]>([]);
-  const [timelineLoading, setTimelineLoading] = useState(false);
-  const [timelineError, setTimelineError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCommandResult(null);
-    setCommandError(null);
-    setRunningAction(null);
-  }, [connection?.id]);
-
-  useEffect(() => {
-    if (!alert?.id) {
-      setAlertTimeline([]);
-      setTimelineError(null);
-      setTimelineLoading(false);
-      return;
-    }
-
-    let disposed = false;
-    setTimelineLoading(true);
-    setTimelineError(null);
-
-    void getAlertTimeline(alert.id, 20)
-      .then((events) => {
-        if (!disposed) {
-          setAlertTimeline(events);
-        }
-      })
-      .catch((cause) => {
-        if (!disposed) {
-          setTimelineError(
-            cause instanceof Error ? cause.message : "Failed to load alert timeline"
-          );
-        }
-      })
-      .finally(() => {
-        if (!disposed) {
-          setTimelineLoading(false);
-        }
-      });
-
-    return () => {
-      disposed = true;
-    };
-  }, [alert?.id]);
-
   const isSvchost = connection?.process.name.toLowerCase() === "svchost.exe";
   const hasLiveProcessOwner =
     connection != null &&
     connection.pid > 0 &&
     connection.process.name.toLowerCase() !== "unknown";
+  const { commandResult, commandError, runningAction, handleRunAction } =
+    useConnectionCommandRunner(connection);
+  const { alertTimeline, timelineLoading, timelineError } = useAlertTimeline(alert?.id);
 
   const actions = useMemo<DetailAction[]>(() => {
     const items: DetailAction[] = [
@@ -125,31 +74,6 @@ export function DetailPanel({
 
   const explanation = getConnectionExplanation(activeConnection);
   const destinationSummary = getConnectionDestinationSummary(activeConnection);
-
-  async function handleRunAction(action: ConnectionCommandAction) {
-    setRunningAction(action);
-    setCommandError(null);
-
-    try {
-      const result = await executeConnectionCommand({
-        action,
-        pid: activeConnection.pid,
-        processName: activeConnection.process.name,
-        localAddress: activeConnection.localAddress,
-        localPort: activeConnection.localPort,
-        remoteAddress: activeConnection.remoteAddress,
-        remotePort: activeConnection.remotePort
-      });
-
-      setCommandResult(result);
-    } catch (cause) {
-      setCommandError(
-        cause instanceof Error ? cause.message : "Failed to execute the requested command"
-      );
-    } finally {
-      setRunningAction(null);
-    }
-  }
 
   return (
     <div
