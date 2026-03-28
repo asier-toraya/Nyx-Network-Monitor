@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
-import { ActivityHistoryPanel } from "./components/ActivityHistoryPanel";
+import { useState } from "react";
 import { AlertList } from "./components/AlertList";
 import { AppSidebar } from "./components/AppSidebar";
 import { CommandOutputModal } from "./components/CommandOutputModal";
 import { ConnectionControls } from "./components/ConnectionControls";
 import { ConnectionTable } from "./components/ConnectionTable";
+import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
 import { EstablishedConnectionsPanel } from "./components/EstablishedConnectionsPanel";
-import { HistoryControls } from "./components/HistoryControls";
+import { HistoryView } from "./components/HistoryView";
+import { PageHeader } from "./components/PageHeader";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { SummaryCard } from "./components/SummaryCard";
 import { TrustedRulesPanel } from "./components/TrustedRulesPanel";
+import { useConnectionSelection } from "./hooks/useConnectionSelection";
 import { useEstablishedReport } from "./hooks/useEstablishedReport";
 import { useMonitorData } from "./hooks/useMonitorData";
 import { useMonitorFilters } from "./hooks/useMonitorFilters";
@@ -18,35 +19,20 @@ import { useThemeMode } from "./hooks/useThemeMode";
 import {
   buildProcessAllowRule,
   buildStrictAllowRule,
-  filterLabel,
-  tabMeta,
   type AppTab,
-  type ConnectionFilter,
-  type SelectedConnectionSource
+  type ConnectionFilter
 } from "./lib/monitoring";
 import {
   createAllowRule,
   deleteAllowRule,
   dismissAlert,
-  getAlertDetails,
   updateAllowRule,
   updateSettings
 } from "./lib/tauri";
-import type {
-  ActivityEvent,
-  AlertRecord,
-  AllowRule,
-  AppSettings,
-  ConnectionEvent
-} from "./types";
+import type { AlertRecord, AllowRule, AppSettings, ConnectionEvent } from "./types";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
-  const [selectedConnection, setSelectedConnection] = useState<ConnectionEvent | null>(null);
-  const [selectedAlert, setSelectedAlert] = useState<AlertRecord | null>(null);
-  const [selectedConnectionSource, setSelectedConnectionSource] =
-    useState<SelectedConnectionSource>(null);
-  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
 
   const { themeMode, setThemeMode } = useThemeMode();
   const {
@@ -100,78 +86,39 @@ export default function App() {
     handleOpenEstablishedConnections,
     handleCloseEstablishedConnections
   } = useEstablishedReport();
+  const {
+    selectedConnection,
+    selectedAlert,
+    selectedActivityId,
+    selectedLiveConnectionId,
+    handleCloseDetails,
+    handleSelectLiveConnection,
+    handleSelectHistoryEvent,
+    handleSelectAlert,
+    handleDismissedAlert
+  } = useConnectionSelection({
+    alerts,
+    liveConnections: connections,
+    escapeActive: establishedOpen,
+    onEscape: handleCloseEstablishedConnections
+  });
 
-  const currentTab = tabMeta(activeTab);
-  const selectedLiveConnectionId =
-    selectedConnectionSource === "live" ? selectedConnection?.id ?? null : null;
+  const monitorControls = {
+    riskFilter: activeFilter,
+    onRiskFilterChange: setActiveFilter,
+    stateFilter,
+    onStateFilterChange: setStateFilter,
+    directionFilter,
+    onDirectionFilterChange: setDirectionFilter,
+    sortMode,
+    onSortModeChange: setSortMode,
+    query: monitorQuery,
+    onQueryChange: setMonitorQuery
+  };
 
-  useEffect(() => {
-    if (!selectedConnection || selectedConnectionSource !== "live") {
-      return;
-    }
-
-    const stillExists = connections.some((connection) => connection.id === selectedConnection.id);
-    if (!stillExists) {
-      clearSelection();
-    }
-  }, [connections, selectedConnection, selectedConnectionSource]);
-
-  useEffect(() => {
-    if (!selectedConnection && !establishedOpen) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        handleCloseDetails();
-        handleCloseEstablishedConnections();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [establishedOpen, selectedConnection]);
-
-  function clearSelection() {
-    setSelectedConnection(null);
-    setSelectedAlert(null);
-    setSelectedConnectionSource(null);
-    setSelectedActivityId(null);
-  }
-
-  function handleCloseDetails() {
-    clearSelection();
-  }
-
-  function handleSelectLiveConnection(connection: ConnectionEvent) {
-    setSelectedConnection(connection);
-    setSelectedConnectionSource("live");
-    setSelectedActivityId(null);
-    const alert = alerts.find((entry) => entry.connectionEventId === connection.id) ?? null;
-    setSelectedAlert(alert);
-  }
-
-  function handleSelectHistoryEvent(event: ActivityEvent) {
-    setSelectedConnection(event.connection);
-    setSelectedConnectionSource("history");
-    setSelectedActivityId(event.id);
-    const alert = alerts.find((entry) => entry.connectionEventId === event.connection.id) ?? null;
-    setSelectedAlert(alert);
-  }
-
-  async function handleSelectAlert(alert: AlertRecord) {
-    setSelectedAlert(alert);
-    setSelectedConnectionSource("live");
-    setSelectedActivityId(null);
-
-    if (alert.connection) {
-      setSelectedConnection(alert.connection);
-      return;
-    }
-
-    const detailed = await getAlertDetails(alert.id);
-    setSelectedAlert(detailed);
-    setSelectedConnection(detailed.connection);
+  function toggleFilter(next: ConnectionFilter) {
+    setActiveTab("dashboard");
+    setActiveFilter((current) => (current === next ? "all" : next));
   }
 
   async function handleAllow(connection: ConnectionEvent) {
@@ -259,10 +206,7 @@ export default function App() {
   async function handleDismiss(alert: AlertRecord) {
     await dismissAlert(alert.id);
     setAlerts((current) => current.filter((entry) => entry.id !== alert.id));
-
-    if (selectedAlert?.id === alert.id) {
-      setSelectedAlert(null);
-    }
+    handleDismissedAlert(alert.id);
   }
 
   async function handleCopyFirewallRule(value: string) {
@@ -278,11 +222,6 @@ export default function App() {
     setSettings(saved);
   }
 
-  function toggleFilter(next: ConnectionFilter) {
-    setActiveTab("dashboard");
-    setActiveFilter((current) => (current === next ? "all" : next));
-  }
-
   return (
     <main className="app-shell">
       <AppSidebar
@@ -296,136 +235,58 @@ export default function App() {
       />
 
       <section className="app-main">
-        <header className="page-header">
-          <div>
-            <p className="page-header__eyebrow">{currentTab.eyebrow}</p>
-            <h1>{currentTab.title}</h1>
-            <p className="page-header__copy">{currentTab.copy}</p>
-          </div>
-
-          {activeTab === "dashboard" ? (
-            <div className="page-header__aside">
-              <div className="page-header__meta">
-                <span className="page-header__meta-label">Scope</span>
-                <strong>{filterLabel(activeFilter)}</strong>
-              </div>
-            </div>
-          ) : null}
-        </header>
+        <PageHeader activeTab={activeTab} activeFilter={activeFilter} />
 
         {error ? <div className="banner-error">{error}</div> : null}
 
         {activeTab === "dashboard" ? (
-          <>
-            <section className="summary-grid">
-              <SummaryCard
-                label="Secure"
-                value={summary.safe}
-                tone="safe"
-                detail={activeFilter === "safe" ? "Filter active" : "Allowed or learned traffic"}
-                active={activeFilter === "safe"}
-                onClick={() => toggleFilter("safe")}
-              />
-              <SummaryCard
-                label="Unidentified"
-                value={summary.unknown}
-                tone="unknown"
-                detail={activeFilter === "unknown" ? "Filter active" : "Needs analyst review"}
-                active={activeFilter === "unknown"}
-                onClick={() => toggleFilter("unknown")}
-              />
-              <SummaryCard
-                label="Suspicious"
-                value={summary.suspicious}
-                tone="suspicious"
-                detail={
-                  activeFilter === "suspicious"
-                    ? "Filter active"
-                    : "Requires immediate review"
-                }
-                active={activeFilter === "suspicious"}
-                onClick={() => toggleFilter("suspicious")}
-              />
-              <SummaryCard
-                label="Total"
-                value={summary.total}
-                tone="neutral"
-                detail={activeFilter === "all" ? "Current snapshot" : "Click to clear filter"}
-                active={activeFilter === "all"}
-                onClick={() => setActiveFilter("all")}
-              />
-            </section>
-
-            <ConnectionControls
-              riskFilter={activeFilter}
-              onRiskFilterChange={setActiveFilter}
-              stateFilter={stateFilter}
-              onStateFilterChange={setStateFilter}
-              directionFilter={directionFilter}
-              onDirectionFilterChange={setDirectionFilter}
-              sortMode={sortMode}
-              onSortModeChange={setSortMode}
-              query={monitorQuery}
-              onQueryChange={setMonitorQuery}
-              searchPlaceholder="Search process, PID, IP, port or reason"
-            />
-
-            <section className="monitor-workspace">
-              <AlertList
-                alerts={filteredAlerts}
-                selectedAlertId={selectedAlert?.id ?? null}
-                onSelect={handleSelectAlert}
-              />
-              <EstablishedConnectionsPanel
-                connections={establishedConnections}
-                selectedId={selectedLiveConnectionId}
-                onSelect={handleSelectLiveConnection}
-                onOpenModal={() => void handleOpenEstablishedConnections()}
-              />
-              <ConnectionTable
-                connections={filteredConnections}
-                selectedId={selectedLiveConnectionId}
-                onSelect={handleSelectLiveConnection}
-              />
-            </section>
-          </>
+          <DashboardView
+            summary={summary}
+            activeFilter={activeFilter}
+            onToggleSummaryFilter={toggleFilter}
+            onRiskFilterChange={setActiveFilter}
+            onClearFilter={() => setActiveFilter("all")}
+            monitorQuery={monitorQuery}
+            onMonitorQueryChange={setMonitorQuery}
+            stateFilter={stateFilter}
+            onStateFilterChange={setStateFilter}
+            directionFilter={directionFilter}
+            onDirectionFilterChange={setDirectionFilter}
+            sortMode={sortMode}
+            onSortModeChange={setSortMode}
+            alerts={filteredAlerts}
+            selectedAlertId={selectedAlert?.id ?? null}
+            onSelectAlert={handleSelectAlert}
+            establishedConnections={establishedConnections}
+            selectedConnectionId={selectedLiveConnectionId}
+            onSelectConnection={handleSelectLiveConnection}
+            onOpenEstablishedModal={() => void handleOpenEstablishedConnections()}
+            liveConnections={filteredConnections}
+          />
         ) : null}
 
         {activeTab === "history" ? (
-          <>
-            <HistoryControls
-              riskFilter={historyRiskFilter}
-              onRiskFilterChange={setHistoryRiskFilter}
-              stateFilter={historyStateFilter}
-              onStateFilterChange={setHistoryStateFilter}
-              directionFilter={historyDirectionFilter}
-              onDirectionFilterChange={setHistoryDirectionFilter}
-              sortMode={historySortMode}
-              onSortModeChange={setHistorySortMode}
-              query={historyQuery}
-              onQueryChange={setHistoryQuery}
-            />
-            <ActivityHistoryPanel
-              events={historyEvents}
-              selectedId={selectedActivityId}
-              onSelect={handleSelectHistoryEvent}
-            />
-          </>
+          <HistoryView
+            riskFilter={historyRiskFilter}
+            onRiskFilterChange={setHistoryRiskFilter}
+            stateFilter={historyStateFilter}
+            onStateFilterChange={setHistoryStateFilter}
+            directionFilter={historyDirectionFilter}
+            onDirectionFilterChange={setHistoryDirectionFilter}
+            sortMode={historySortMode}
+            onSortModeChange={setHistorySortMode}
+            query={historyQuery}
+            onQueryChange={setHistoryQuery}
+            events={historyEvents}
+            selectedId={selectedActivityId}
+            onSelect={handleSelectHistoryEvent}
+          />
         ) : null}
 
         {activeTab === "alerts" ? (
           <>
             <ConnectionControls
-              riskFilter={activeFilter}
-              onRiskFilterChange={setActiveFilter}
-              stateFilter={stateFilter}
-              onStateFilterChange={setStateFilter}
-              directionFilter={directionFilter}
-              onDirectionFilterChange={setDirectionFilter}
-              sortMode={sortMode}
-              onSortModeChange={setSortMode}
-              query={monitorQuery}
-              onQueryChange={setMonitorQuery}
+              {...monitorControls}
               searchPlaceholder="Search process, PID, IP, port or alert reason"
               showRiskFilter={false}
             />
@@ -441,16 +302,7 @@ export default function App() {
         {activeTab === "established" ? (
           <>
             <ConnectionControls
-              riskFilter={activeFilter}
-              onRiskFilterChange={setActiveFilter}
-              stateFilter={stateFilter}
-              onStateFilterChange={setStateFilter}
-              directionFilter={directionFilter}
-              onDirectionFilterChange={setDirectionFilter}
-              sortMode={sortMode}
-              onSortModeChange={setSortMode}
-              query={monitorQuery}
-              onQueryChange={setMonitorQuery}
+              {...monitorControls}
               searchPlaceholder="Search process, PID, IP, port or reason"
             />
             <EstablishedConnectionsPanel
@@ -466,16 +318,7 @@ export default function App() {
         {activeTab === "live" ? (
           <>
             <ConnectionControls
-              riskFilter={activeFilter}
-              onRiskFilterChange={setActiveFilter}
-              stateFilter={stateFilter}
-              onStateFilterChange={setStateFilter}
-              directionFilter={directionFilter}
-              onDirectionFilterChange={setDirectionFilter}
-              sortMode={sortMode}
-              onSortModeChange={setSortMode}
-              query={monitorQuery}
-              onQueryChange={setMonitorQuery}
+              {...monitorControls}
               searchPlaceholder="Search process, PID, IP, port or reason"
             />
             <ConnectionTable
