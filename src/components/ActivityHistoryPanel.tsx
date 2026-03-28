@@ -44,7 +44,7 @@ export function ActivityHistoryPanel({
               <tr>
                 <th>Time</th>
                 <th>Change</th>
-                <th>Risk</th>
+                <th className="risk-cell">Risk</th>
                 <th>Process</th>
                 <th>Local</th>
                 <th>Remote</th>
@@ -64,7 +64,7 @@ export function ActivityHistoryPanel({
                       {formatChangeLabel(event.changeType)}
                     </span>
                   </td>
-                  <td>
+                  <td className="risk-cell">
                     <span className={`risk-pill risk-pill--${event.connection.riskLevel}`}>
                       {getConnectionRiskLabel(event.connection)}
                     </span>

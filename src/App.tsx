@@ -42,6 +42,7 @@ type AppTab =
   | "history"
   | "rules"
   | "settings";
+type ThemeMode = "light" | "dark";
 type ConnectionFilter = RiskLevel | "all";
 type SelectedConnectionSource = "live" | "history" | null;
 type MonitorStateFilter =
@@ -62,6 +63,20 @@ type MonitorSort = "risk" | "recent" | "process" | "remote" | "local" | "score" 
 
 const ACTIVITY_LIMIT = 200;
 const RECONCILE_INTERVAL_MS = 30_000;
+const THEME_STORAGE_KEY = "sentinel-desk-theme";
+
+function getInitialTheme(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (storedTheme === "light" || storedTheme === "dark") {
+    return storedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 function computeSummary(connections: ConnectionEvent[]): SummaryStats {
   return connections.reduce(
@@ -561,6 +576,7 @@ export default function App() {
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getInitialTheme());
   const [activeFilter, setActiveFilter] = useState<ConnectionFilter>("all");
   const [monitorQuery, setMonitorQuery] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
@@ -577,6 +593,12 @@ export default function App() {
   const [establishedLoading, setEstablishedLoading] = useState(false);
   const [establishedError, setEstablishedError] = useState<string | null>(null);
   const currentTab = tabMeta(activeTab);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    document.documentElement.style.colorScheme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   function buildStrictAllowRule(connection: ConnectionEvent): Partial<AllowRule> {
     return {
@@ -1205,6 +1227,39 @@ export default function App() {
             Engine settings
           </button>
         </nav>
+
+        <section className="sidebar-theme" aria-label="Appearance">
+          <div className="sidebar-theme__header">
+            <div>
+              <p className="sidebar-theme__label">Appearance</p>
+              <span className="sidebar-theme__copy">
+                Switch the interface for bright or low-light work.
+              </span>
+            </div>
+            <span className="sidebar-theme__value">
+              {themeMode === "dark" ? "Dark mode" : "Light mode"}
+            </span>
+          </div>
+
+          <div className="theme-toggle" role="group" aria-label="Theme mode">
+            <button
+              type="button"
+              className={`theme-toggle__button ${themeMode === "light" ? "is-active" : ""}`}
+              onClick={() => setThemeMode("light")}
+              aria-pressed={themeMode === "light"}
+            >
+              Light
+            </button>
+            <button
+              type="button"
+              className={`theme-toggle__button ${themeMode === "dark" ? "is-active" : ""}`}
+              onClick={() => setThemeMode("dark")}
+              aria-pressed={themeMode === "dark"}
+            >
+              Dark
+            </button>
+          </div>
+        </section>
 
         <div className="sidebar-status">
           <span className="status-dot" />

@@ -83,7 +83,7 @@ export function EstablishedConnectionsPanel({
         className={`${selectedId === connection.id ? "is-selected" : ""} ${nested ? "connection-group__child" : ""}`.trim()}
         onClick={() => onSelect(connection)}
       >
-        <td>
+        <td className="risk-cell">
           <span className={`risk-pill risk-pill--${connection.riskLevel}`}>
             {getConnectionRiskLabel(connection)}
           </span>
@@ -135,7 +135,7 @@ export function EstablishedConnectionsPanel({
           <table className="connection-table">
             <thead>
               <tr>
-                <th>Risk</th>
+                <th className="risk-cell">Risk</th>
                 <th>Process</th>
                 <th>Local</th>
                 <th>Remote</th>
