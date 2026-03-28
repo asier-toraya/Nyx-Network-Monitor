@@ -136,6 +136,24 @@ export function getConnectionExplanation(connection: ConnectionEvent) {
   return null;
 }
 
+export function getConnectionDestinationSummary(connection: ConnectionEvent) {
+  if (!connection.destination) {
+    return connection.remoteAddress ? "No DNS/ASN enrichment available yet." : "Listener / n/a";
+  }
+
+  const parts = [
+    connection.destination.hostname,
+    connection.destination.organization,
+    connection.destination.asn
+  ].filter(Boolean);
+
+  if (parts.length === 0) {
+    return `Scope: ${connection.destination.scope}`;
+  }
+
+  return parts.join(" | ");
+}
+
 export function formatUserContext(user: string | null) {
   if (!user) {
     return "User context unavailable";

@@ -635,6 +635,10 @@ fn match_allow_rule(
     allow_rules: &[AllowRule],
 ) -> Option<RiskReason> {
     allow_rules.iter().find_map(|rule| {
+        if !rule.enabled {
+            return None;
+        }
+
         let process_match = rule
             .process_name
             .as_deref()
@@ -1460,6 +1464,7 @@ mod tests {
             &[AllowRule {
                 id: "1".to_string(),
                 label: "Trusted admin ssh".to_string(),
+                enabled: true,
                 process_name: Some("ssh.exe".to_string()),
                 signer: None,
                 exe_path: Some("C:\\Program Files\\ssh.exe".to_string()),
@@ -1468,7 +1473,9 @@ mod tests {
                 port: Some(22),
                 protocol: Some("tcp".to_string()),
                 direction: Some("outgoing".to_string()),
+                notes: None,
                 created_at: Utc::now(),
+                updated_at: Utc::now(),
             }],
             &AppSettings::default(),
         );
@@ -1663,6 +1670,7 @@ mod tests {
             &[AllowRule {
                 id: "1".to_string(),
                 label: "Exact host".to_string(),
+                enabled: true,
                 process_name: Some("ssh.exe".to_string()),
                 signer: None,
                 exe_path: None,
@@ -1671,7 +1679,9 @@ mod tests {
                 port: Some(22),
                 protocol: Some("tcp".to_string()),
                 direction: Some("outgoing".to_string()),
+                notes: None,
                 created_at: Utc::now(),
+                updated_at: Utc::now(),
             }],
             &AppSettings::default(),
         );

@@ -4,6 +4,7 @@ import type {
   ActivityEvent,
   AlertFilters,
   AlertRecord,
+  AlertTimelineEvent,
   AllowRule,
   AppSettings,
   CommandExecutionResult,
@@ -61,6 +62,20 @@ export async function getRecentActivity(limit?: number): Promise<ActivityEvent[]
 
 export async function deleteAllowRule(id: string): Promise<void> {
   return invoke("delete_allow_rule", { id });
+}
+
+export async function updateAllowRule(
+  id: string,
+  rule: Partial<AllowRule>
+): Promise<AllowRule> {
+  return invoke("update_allow_rule", { id, rule });
+}
+
+export async function getAlertTimeline(
+  id: string,
+  limit?: number
+): Promise<AlertTimelineEvent[]> {
+  return invoke("get_alert_timeline", { id, limit });
 }
 
 export async function executeConnectionCommand(

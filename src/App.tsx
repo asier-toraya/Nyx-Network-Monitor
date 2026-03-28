@@ -20,6 +20,7 @@ import {
   getSettings,
   listAllowRules,
   subscribeConnectionEvents,
+  updateAllowRule,
   updateSettings
 } from "./lib/tauri";
 import type {
@@ -36,6 +37,21 @@ import type {
 type AppTab = "monitor" | "history" | "rules" | "settings";
 type ConnectionFilter = RiskLevel | "all";
 type SelectedConnectionSource = "live" | "history" | null;
+type MonitorStateFilter =
+  | "all"
+  | "active"
+  | "passive"
+  | "established"
+  | "listening"
+  | "closed";
+type MonitorDirectionFilter =
+  | "all"
+  | "incoming"
+  | "outgoing"
+  | "listening"
+  | "closing"
+  | "closed";
+type MonitorSort = "risk" | "recent" | "process" | "remote" | "local" | "score" | "confidence";
 
 const ACTIVITY_LIMIT = 200;
 const RECONCILE_INTERVAL_MS = 30_000;
@@ -155,6 +171,13 @@ function connectionSearchTerms(connection: ConnectionEvent) {
     connection.direction,
     connection.state,
     connection.riskLevel,
+    connection.destination?.scope,
+    connection.destination?.hostname,
+    connection.destination?.organization,
+    connection.destination?.asn,
+    connection.destination?.domain,
+    connection.destination?.country,
+    connection.destination?.source,
     connection.reputation?.summary,
     connection.reasons.map((reason) => `${reason.code} ${reason.message}`).join(" ")
   ]
@@ -184,6 +207,10 @@ function matchesAlertQuery(alert: AlertRecord, query: string) {
     alert.connection?.remoteAddress,
     alert.connection?.localAddress,
     alert.connection?.pid.toString(),
+    alert.connection?.destination?.hostname,
+    alert.connection?.destination?.organization,
+    alert.connection?.destination?.asn,
+    alert.connection?.destination?.domain,
     alert.reasons.map((reason) => `${reason.code} ${reason.message}`).join(" ")
   ]
     .filter(Boolean)
@@ -216,9 +243,112 @@ function filterLabel(value: ConnectionFilter) {
   return "Suspicious";
 }
 
+function normalizeState(state: string) {
+  return state.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
 function isEstablishedTcp(connection: ConnectionEvent) {
-  const normalizedState = connection.state.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return connection.protocol.toLowerCase() === "tcp" && normalizedState === "established";
+  return connection.protocol.toLowerCase() === "tcp" && normalizeState(connection.state) === "established";
+}
+
+function isPassiveConnection(connection: ConnectionEvent) {
+  const normalizedState = normalizeState(connection.state);
+  return (
+    connection.direction === "listening" ||
+    normalizedState === "timewait" ||
+    normalizedState === "closewait"
+  );
+}
+
+function matchesStateFilter(connection: ConnectionEvent, filter: MonitorStateFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  const state = normalizeState(connection.state);
+
+  if (filter === "active") {
+    return !isPassiveConnection(connection);
+  }
+
+  if (filter === "passive") {
+    return isPassiveConnection(connection);
+  }
+
+  if (filter === "established") {
+    return state === "established";
+  }
+
+  if (filter === "listening") {
+    return connection.direction === "listening";
+  }
+
+  if (filter === "closed") {
+    return state === "timewait" || state === "closewait";
+  }
+
+  return true;
+}
+
+function matchesDirectionFilter(connection: ConnectionEvent, filter: MonitorDirectionFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  return connection.direction === filter;
+}
+
+function endpointLabel(connection: ConnectionEvent, mode: "local" | "remote") {
+  if (mode === "local") {
+    return `${connection.localAddress}:${connection.localPort}`;
+  }
+
+  return connection.remoteAddress && connection.remotePort
+    ? `${connection.remoteAddress}:${connection.remotePort}`
+    : "";
+}
+
+function sortConnectionsByMode(connections: ConnectionEvent[], sortMode: MonitorSort) {
+  if (sortMode === "risk") {
+    return sortConnections(connections);
+  }
+
+  const sorted = [...connections];
+
+  sorted.sort((left, right) => {
+    if (sortMode === "recent") {
+      return new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime();
+    }
+
+    if (sortMode === "process") {
+      return left.process.name.localeCompare(right.process.name) || left.pid - right.pid;
+    }
+
+    if (sortMode === "remote") {
+      return (
+        endpointLabel(left, "remote").localeCompare(endpointLabel(right, "remote")) ||
+        right.score - left.score
+      );
+    }
+
+    if (sortMode === "local") {
+      return (
+        endpointLabel(left, "local").localeCompare(endpointLabel(right, "local")) ||
+        right.score - left.score
+      );
+    }
+
+    if (sortMode === "score") {
+      return right.score - left.score || new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime();
+    }
+
+    return (
+      right.confidence - left.confidence ||
+      new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+    );
+  });
+
+  return sorted;
 }
 
 function tabMeta(tab: AppTab) {
@@ -270,6 +400,9 @@ export default function App() {
   const [activeFilter, setActiveFilter] = useState<ConnectionFilter>("all");
   const [monitorQuery, setMonitorQuery] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
+  const [stateFilter, setStateFilter] = useState<MonitorStateFilter>("all");
+  const [directionFilter, setDirectionFilter] = useState<MonitorDirectionFilter>("all");
+  const [sortMode, setSortMode] = useState<MonitorSort>("risk");
   const [establishedResult, setEstablishedResult] = useState<CommandExecutionResult | null>(null);
   const [establishedOpen, setEstablishedOpen] = useState(false);
   const [establishedLoading, setEstablishedLoading] = useState(false);
@@ -376,11 +509,19 @@ export default function App() {
   );
 
   const filteredConnections = useMemo(() => {
-    if (activeFilter === "all") {
-      return searchedConnections;
-    }
-    return searchedConnections.filter((connection) => connection.riskLevel === activeFilter);
-  }, [activeFilter, searchedConnections]);
+    const filtered = searchedConnections.filter((connection) => {
+      const riskMatches =
+        activeFilter === "all" ? true : connection.riskLevel === activeFilter;
+
+      return (
+        riskMatches &&
+        matchesStateFilter(connection, stateFilter) &&
+        matchesDirectionFilter(connection, directionFilter)
+      );
+    });
+
+    return sortConnectionsByMode(filtered, sortMode);
+  }, [activeFilter, directionFilter, searchedConnections, sortMode, stateFilter]);
 
   const filteredAlerts = useMemo(
     () => alerts.filter((alert) => matchesAlertQuery(alert, monitorQuery)),
@@ -459,6 +600,7 @@ export default function App() {
   async function handleAllow(connection: ConnectionEvent) {
     const created = await createAllowRule({
       label: `${connection.process.name} -> ${connection.remoteAddress ?? "listener"}`,
+      enabled: true,
       processName: connection.process.name,
       signer: connection.process.signer,
       exePath: connection.process.exePath,
@@ -466,9 +608,66 @@ export default function App() {
       remotePattern: connection.remoteAddress,
       port: connection.remotePort ?? connection.localPort,
       protocol: connection.protocol,
-      direction: connection.direction
+      direction: connection.direction,
+      notes: `Created from connection inspector on ${new Date().toLocaleString()}`
     });
     setAllowRules((current) => [created, ...current]);
+  }
+
+  async function handleUpdateRule(rule: AllowRule, changes: Partial<AllowRule>) {
+    const patch: Partial<AllowRule> = {};
+
+    if (changes.label !== undefined) {
+      patch.label = changes.label.trim() || rule.label;
+    }
+
+    if (changes.enabled !== undefined) {
+      patch.enabled = changes.enabled;
+    }
+
+    if (changes.processName !== undefined) {
+      patch.processName = changes.processName?.trim() ? changes.processName.trim() : null;
+    }
+
+    if (changes.signer !== undefined) {
+      patch.signer = changes.signer?.trim() ? changes.signer.trim() : null;
+    }
+
+    if (changes.exePath !== undefined) {
+      patch.exePath = changes.exePath?.trim() ? changes.exePath.trim() : null;
+    }
+
+    if (changes.sha256 !== undefined) {
+      patch.sha256 = changes.sha256?.trim() ? changes.sha256.trim() : null;
+    }
+
+    if (changes.remotePattern !== undefined) {
+      patch.remotePattern = changes.remotePattern?.trim()
+        ? changes.remotePattern.trim()
+        : null;
+    }
+
+    if (changes.port !== undefined) {
+      patch.port = changes.port;
+    }
+
+    if (changes.protocol !== undefined) {
+      patch.protocol = changes.protocol?.trim() ? changes.protocol.trim() : null;
+    }
+
+    if (changes.direction !== undefined) {
+      patch.direction = changes.direction?.trim() ? changes.direction.trim() : null;
+    }
+
+    if (changes.notes !== undefined) {
+      patch.notes = changes.notes?.trim() ? changes.notes.trim() : null;
+    }
+
+    const updated = await updateAllowRule(rule.id, patch);
+
+    setAllowRules((current) =>
+      current.map((entry) => (entry.id === updated.id ? updated : entry))
+    );
   }
 
   async function handleDeleteRule(rule: AllowRule) {
@@ -684,6 +883,58 @@ export default function App() {
               />
             </section>
 
+            <section className="monitor-controls">
+              <label className="monitor-controls__field">
+                <span className="detail-label">State</span>
+                <select
+                  value={stateFilter}
+                  onChange={(event) => setStateFilter(event.target.value as MonitorStateFilter)}
+                >
+                  <option value="all">All states</option>
+                  <option value="active">Active</option>
+                  <option value="passive">Passive</option>
+                  <option value="established">Established</option>
+                  <option value="listening">Listening</option>
+                  <option value="closed">Closed / cleanup</option>
+                </select>
+              </label>
+              <label className="monitor-controls__field">
+                <span className="detail-label">Direction</span>
+                <select
+                  value={directionFilter}
+                  onChange={(event) =>
+                    setDirectionFilter(event.target.value as MonitorDirectionFilter)
+                  }
+                >
+                  <option value="all">All directions</option>
+                  <option value="incoming">Incoming</option>
+                  <option value="outgoing">Outgoing</option>
+                  <option value="listening">Listening</option>
+                  <option value="closing">Closing</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
+              <label className="monitor-controls__field">
+                <span className="detail-label">Sort</span>
+                <select
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value as MonitorSort)}
+                >
+                  <option value="risk">Highest risk</option>
+                  <option value="recent">Most recent</option>
+                  <option value="process">Process</option>
+                  <option value="remote">Remote endpoint</option>
+                  <option value="local">Local endpoint</option>
+                  <option value="score">Risk score</option>
+                  <option value="confidence">Confidence</option>
+                </select>
+              </label>
+              <div className="monitor-controls__meta">
+                <span className="detail-label">Result set</span>
+                <strong>{filteredConnections.length}</strong>
+              </div>
+            </section>
+
             <section className="monitor-workspace">
               <AlertList
                 alerts={filteredAlerts}
@@ -718,7 +969,11 @@ export default function App() {
         ) : null}
 
         {activeTab === "rules" ? (
-          <TrustedRulesPanel allowRules={allowRules} onDelete={handleDeleteRule} />
+          <TrustedRulesPanel
+            allowRules={allowRules}
+            onDelete={handleDeleteRule}
+            onUpdate={handleUpdateRule}
+          />
         ) : null}
 
         {activeTab === "settings" ? (

@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{
-    ActivityEvent, AlertFilters, AlertRecord, AllowRule, AppSettings, ConnectionEvent, ReputationInfo,
-    TrafficBaseline,
+    ActivityEvent, AlertFilters, AlertRecord, AlertTimelineEvent, AllowRule, AppSettings,
+    ConnectionEvent, DestinationInfo, ReputationInfo, TrafficBaseline,
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +35,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS allow_rules (
                 id TEXT PRIMARY KEY,
                 label TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
                 process_name TEXT,
                 signer TEXT,
                 exe_path TEXT,
@@ -43,7 +44,9 @@ impl Database {
                 port INTEGER,
                 protocol TEXT,
                 direction TEXT,
-                created_at TEXT NOT NULL
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS connection_events (
                 id TEXT PRIMARY KEY,
@@ -86,6 +89,11 @@ impl Database {
                 value_json TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS destination_cache (
+                ip TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS baseline_patterns (
                 pattern_key TEXT PRIMARY KEY,
                 summary TEXT NOT NULL,
@@ -99,11 +107,31 @@ impl Database {
                 change_type TEXT NOT NULL,
                 connection_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS alert_timeline_events (
+                id TEXT PRIMARY KEY,
+                alert_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                risk_level TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                confidence INTEGER NOT NULL DEFAULT 50,
+                occurrence_count INTEGER NOT NULL DEFAULT 1,
+                summary TEXT NOT NULL
+            );
             "#,
         )?;
 
+        ensure_column(&connection, "allow_rules", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
         ensure_column(&connection, "allow_rules", "exe_path", "TEXT")?;
         ensure_column(&connection, "allow_rules", "sha256", "TEXT")?;
+        ensure_column(&connection, "allow_rules", "notes", "TEXT")?;
+        ensure_column(
+            &connection,
+            "allow_rules",
+            "updated_at",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
         ensure_column(&connection, "connection_events", "confidence", "INTEGER NOT NULL DEFAULT 50")?;
         ensure_column(&connection, "connection_events", "baseline_hits", "INTEGER NOT NULL DEFAULT 0")?;
         ensure_column(&connection, "alerts", "alert_key", "TEXT NOT NULL DEFAULT ''")?;
@@ -142,11 +170,12 @@ impl Database {
         let connection = self.connection()?;
         connection.execute(
             "INSERT INTO allow_rules
-                (id, label, process_name, signer, exe_path, sha256, remote_pattern, port, protocol, direction, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                (id, label, enabled, process_name, signer, exe_path, sha256, remote_pattern, port, protocol, direction, notes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 rule.id,
                 rule.label,
+                rule.enabled as i64,
                 rule.process_name,
                 rule.signer,
                 rule.exe_path,
@@ -155,7 +184,45 @@ impl Database {
                 rule.port,
                 rule.protocol,
                 rule.direction,
+                rule.notes,
                 rule.created_at.to_rfc3339(),
+                rule.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_allow_rule(&self, rule: &AllowRule) -> anyhow::Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "UPDATE allow_rules SET
+                label = ?2,
+                enabled = ?3,
+                process_name = ?4,
+                signer = ?5,
+                exe_path = ?6,
+                sha256 = ?7,
+                remote_pattern = ?8,
+                port = ?9,
+                protocol = ?10,
+                direction = ?11,
+                notes = ?12,
+                updated_at = ?13
+             WHERE id = ?1",
+            params![
+                rule.id,
+                rule.label,
+                rule.enabled as i64,
+                rule.process_name,
+                rule.signer,
+                rule.exe_path,
+                rule.sha256,
+                rule.remote_pattern,
+                rule.port,
+                rule.protocol,
+                rule.direction,
+                rule.notes,
+                rule.updated_at.to_rfc3339(),
             ],
         )?;
         Ok(())
@@ -164,22 +231,28 @@ impl Database {
     pub fn list_allow_rules(&self) -> anyhow::Result<Vec<AllowRule>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, label, process_name, signer, exe_path, sha256, remote_pattern, port, protocol, direction, created_at
+            "SELECT id, label, enabled, process_name, signer, exe_path, sha256, remote_pattern, port, protocol, direction, notes, created_at, updated_at
              FROM allow_rules ORDER BY created_at DESC",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(AllowRule {
                 id: row.get(0)?,
                 label: row.get(1)?,
-                process_name: row.get(2)?,
-                signer: row.get(3)?,
-                exe_path: row.get(4)?,
-                sha256: row.get(5)?,
-                remote_pattern: row.get(6)?,
-                port: row.get(7)?,
-                protocol: row.get(8)?,
-                direction: row.get(9)?,
-                created_at: parse_datetime(row.get::<_, String>(10)?),
+                enabled: row.get::<_, Option<i64>>(2)?.unwrap_or(1) != 0,
+                process_name: row.get(3)?,
+                signer: row.get(4)?,
+                exe_path: row.get(5)?,
+                sha256: row.get(6)?,
+                remote_pattern: row.get(7)?,
+                port: row.get(8)?,
+                protocol: row.get(9)?,
+                direction: row.get(10)?,
+                notes: row.get(11)?,
+                created_at: parse_datetime(row.get::<_, String>(12)?),
+                updated_at: parse_datetime(
+                    row.get::<_, Option<String>>(13)?
+                        .unwrap_or_else(|| row.get::<_, String>(12).unwrap_or_default()),
+                ),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -275,6 +348,58 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn append_alert_timeline_event(&self, event: &AlertTimelineEvent) -> anyhow::Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO alert_timeline_events
+                (id, alert_id, timestamp, event_type, status, risk_level, score, confidence, occurrence_count, summary)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                event.id,
+                event.alert_id,
+                event.timestamp.to_rfc3339(),
+                event.event_type,
+                event.status,
+                serde_json::to_string(&event.risk_level)?,
+                event.score,
+                event.confidence,
+                event.occurrence_count,
+                event.summary,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_alert_timeline(
+        &self,
+        alert_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<AlertTimelineEvent>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, alert_id, timestamp, event_type, status, risk_level, score, confidence, occurrence_count, summary
+             FROM alert_timeline_events
+             WHERE alert_id = ?1
+             ORDER BY timestamp DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![alert_id, limit as i64], |row| {
+            Ok(AlertTimelineEvent {
+                id: row.get(0)?,
+                alert_id: row.get(1)?,
+                timestamp: parse_datetime(row.get::<_, String>(2)?),
+                event_type: row.get(3)?,
+                status: row.get(4)?,
+                risk_level: serde_json::from_str(&row.get::<_, String>(5)?).unwrap(),
+                score: row.get(6)?,
+                confidence: row.get::<_, Option<i32>>(7)?.unwrap_or(50),
+                occurrence_count: row.get::<_, Option<u32>>(8)?.unwrap_or(1),
+                summary: row.get(9)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn save_alert(&self, alert: &AlertRecord) -> anyhow::Result<()> {
         let connection = self.connection()?;
         connection.execute(
@@ -357,7 +482,10 @@ impl Database {
 
     pub fn dismiss_alert(&self, id: &str) -> anyhow::Result<()> {
         let connection = self.connection()?;
-        connection.execute("UPDATE alerts SET status = 'dismissed' WHERE id = ?1", params![id])?;
+        connection.execute(
+            "UPDATE alerts SET status = 'dismissed', updated_at = ?2 WHERE id = ?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
         Ok(())
     }
 
@@ -433,6 +561,27 @@ impl Database {
         Ok(Some(serde_json::from_str(&value_json)?))
     }
 
+    pub fn get_cached_destination(&self, ip: &str) -> anyhow::Result<Option<DestinationInfo>> {
+        let connection = self.connection()?;
+        let row = connection
+            .query_row(
+                "SELECT value_json, expires_at FROM destination_cache WHERE ip = ?1",
+                params![ip],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((value_json, expires_at)) = row else {
+            return Ok(None);
+        };
+
+        if parse_datetime(expires_at) < Utc::now() {
+            return Ok(None);
+        }
+
+        Ok(Some(serde_json::from_str(&value_json)?))
+    }
+
     pub fn set_cached_reputation(
         &self,
         ip: &str,
@@ -442,6 +591,24 @@ impl Database {
         let connection = self.connection()?;
         connection.execute(
             "INSERT INTO reputation_cache (ip, value_json, expires_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(ip) DO UPDATE SET
+                value_json = excluded.value_json,
+                expires_at = excluded.expires_at",
+            params![ip, serde_json::to_string(value)?, expires_at.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_cached_destination(
+        &self,
+        ip: &str,
+        value: &DestinationInfo,
+        expires_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO destination_cache (ip, value_json, expires_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(ip) DO UPDATE SET
                 value_json = excluded.value_json,
@@ -469,6 +636,14 @@ impl Database {
         connection.execute(
             "DELETE FROM reputation_cache WHERE expires_at < ?1",
             params![Utc::now().to_rfc3339()],
+        )?;
+        connection.execute(
+            "DELETE FROM destination_cache WHERE expires_at < ?1",
+            params![Utc::now().to_rfc3339()],
+        )?;
+        connection.execute(
+            "DELETE FROM alert_timeline_events WHERE timestamp < ?1",
+            params![cutoff.to_rfc3339()],
         )?;
         Ok(())
     }
@@ -591,6 +766,7 @@ mod tests {
         db.save_allow_rule(&AllowRule {
             id: "1".to_string(),
             label: "Trusted".to_string(),
+            enabled: true,
             process_name: Some("ssh.exe".to_string()),
             signer: None,
             exe_path: Some("C:\\Windows\\System32\\OpenSSH\\ssh.exe".to_string()),
@@ -599,14 +775,18 @@ mod tests {
             port: Some(22),
             protocol: Some("tcp".to_string()),
             direction: Some("outgoing".to_string()),
+            notes: Some("analyst note".to_string()),
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         })
         .unwrap();
 
         let rules = db.list_allow_rules().unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].label, "Trusted");
+        assert!(rules[0].enabled);
         assert_eq!(rules[0].sha256.as_deref(), Some("abc"));
+        assert_eq!(rules[0].notes.as_deref(), Some("analyst note"));
     }
 
     #[test]
@@ -616,6 +796,7 @@ mod tests {
         db.save_allow_rule(&AllowRule {
             id: "1".to_string(),
             label: "Trusted".to_string(),
+            enabled: true,
             process_name: Some("ssh.exe".to_string()),
             signer: None,
             exe_path: None,
@@ -624,7 +805,9 @@ mod tests {
             port: None,
             protocol: None,
             direction: None,
+            notes: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         })
         .unwrap();
 
@@ -713,6 +896,7 @@ mod tests {
                 message: "Seen before".to_string(),
             }],
             reputation: None,
+            destination: None,
             suggested_firewall_rule: None,
             is_new: false,
         };

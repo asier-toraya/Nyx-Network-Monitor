@@ -1,6 +1,7 @@
 mod classifier;
 mod command_runner;
 mod db;
+mod destination;
 mod models;
 mod monitor;
 mod process_info;
@@ -15,8 +16,8 @@ use crate::{
     command_runner::{get_established_connections_report, run_connection_command},
     db::Database,
     models::{
-        ActivityEvent, AlertFilters, AlertRecord, AllowRule, AllowRuleInput, AppSettings,
-        CommandExecutionResult, ConnectionCommandRequest, ConnectionEvent,
+        ActivityEvent, AlertFilters, AlertRecord, AlertTimelineEvent, AllowRule, AllowRuleInput,
+        AppSettings, CommandExecutionResult, ConnectionCommandRequest, ConnectionEvent,
     },
 };
 
@@ -69,21 +70,86 @@ fn delete_allow_rule(state: State<'_, AppState>, id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+fn update_allow_rule(
+    state: State<'_, AppState>,
+    id: String,
+    rule: AllowRuleInput,
+) -> Result<AllowRule, String> {
+    let existing = state
+        .allow_rules
+        .read()
+        .iter()
+        .find(|entry| entry.id == id)
+        .cloned()
+        .ok_or_else(|| "Trusted rule not found".to_string())?;
+
+    let updated = AllowRule {
+        id: existing.id,
+        label: rule.label.unwrap_or(existing.label),
+        enabled: rule.enabled.unwrap_or(existing.enabled),
+        process_name: apply_optional_text_patch(existing.process_name, rule.process_name),
+        signer: apply_optional_text_patch(existing.signer, rule.signer),
+        exe_path: apply_optional_text_patch(existing.exe_path, rule.exe_path),
+        sha256: apply_optional_text_patch(existing.sha256, rule.sha256),
+        remote_pattern: apply_optional_text_patch(existing.remote_pattern, rule.remote_pattern),
+        port: apply_optional_port_patch(existing.port, rule.port),
+        protocol: apply_optional_text_patch(existing.protocol, rule.protocol),
+        direction: apply_optional_text_patch(existing.direction, rule.direction),
+        notes: apply_optional_text_patch(existing.notes, rule.notes),
+        created_at: existing.created_at,
+        updated_at: Utc::now(),
+    };
+
+    state
+        .database
+        .update_allow_rule(&updated)
+        .map_err(|error| error.to_string())?;
+
+    let mut rules = state.allow_rules.write();
+    if let Some(entry) = rules.iter_mut().find(|entry| entry.id == updated.id) {
+        *entry = updated.clone();
+    }
+
+    Ok(updated)
+}
+
+#[tauri::command]
 fn create_allow_rule(state: State<'_, AppState>, rule: AllowRuleInput) -> Result<AllowRule, String> {
+    let AllowRuleInput {
+        label,
+        enabled,
+        process_name,
+        signer,
+        exe_path,
+        sha256,
+        remote_pattern,
+        port,
+        protocol,
+        direction,
+        notes,
+    } = rule;
+
     let allow_rule = AllowRule {
         id: Uuid::new_v4().to_string(),
-        label: rule
-            .label
-            .unwrap_or_else(|| format!("Trusted {}", rule.process_name.clone().unwrap_or_else(|| "pattern".to_string()))),
-        process_name: rule.process_name,
-        signer: rule.signer,
-        exe_path: rule.exe_path,
-        sha256: rule.sha256,
-        remote_pattern: rule.remote_pattern,
-        port: rule.port,
-        protocol: rule.protocol,
-        direction: rule.direction,
+        label: label.unwrap_or_else(|| {
+            format!(
+                "Trusted {}",
+                flatten_optional_text_input(process_name.clone())
+                    .unwrap_or_else(|| "pattern".to_string())
+            )
+        }),
+        enabled: enabled.unwrap_or(true),
+        process_name: flatten_optional_text_input(process_name),
+        signer: flatten_optional_text_input(signer),
+        exe_path: flatten_optional_text_input(exe_path),
+        sha256: flatten_optional_text_input(sha256),
+        remote_pattern: flatten_optional_text_input(remote_pattern),
+        port: port.flatten(),
+        protocol: flatten_optional_text_input(protocol),
+        direction: flatten_optional_text_input(direction),
+        notes: flatten_optional_text_input(notes),
         created_at: Utc::now(),
+        updated_at: Utc::now(),
     };
 
     state
@@ -96,10 +162,38 @@ fn create_allow_rule(state: State<'_, AppState>, rule: AllowRuleInput) -> Result
 
 #[tauri::command]
 fn dismiss_alert(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let alert_before = state
+        .database
+        .get_alert(&id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Alert not found".to_string())?;
+
     state
         .database
         .dismiss_alert(&id)
         .map_err(|error| error.to_string())?;
+    if let Some(updated) = state
+        .database
+        .get_alert(&id)
+        .map_err(|error| error.to_string())?
+    {
+        let timeline_event = AlertTimelineEvent {
+            id: Uuid::new_v4().to_string(),
+            alert_id: updated.id.clone(),
+            timestamp: Utc::now(),
+            event_type: "dismissed".to_string(),
+            status: "dismissed".to_string(),
+            risk_level: updated.risk_level.clone(),
+            score: updated.score,
+            confidence: updated.confidence,
+            occurrence_count: updated.occurrence_count,
+            summary: format!(
+                "Alert dismissed after {} occurrence(s). Previous status was {}.",
+                updated.occurrence_count, alert_before.status
+            ),
+        };
+        let _ = state.database.append_alert_timeline_event(&timeline_event);
+    }
     state
         .active_alerts
         .write()
@@ -139,10 +233,52 @@ fn get_recent_activity(
 }
 
 #[tauri::command]
+fn get_alert_timeline(
+    state: State<'_, AppState>,
+    id: String,
+    limit: Option<usize>,
+) -> Result<Vec<AlertTimelineEvent>, String> {
+    state
+        .database
+        .list_alert_timeline(&id, limit.unwrap_or(50).clamp(1, 200))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn execute_connection_command(
     request: ConnectionCommandRequest,
 ) -> Result<CommandExecutionResult, String> {
     run_connection_command(&request).map_err(|error| error.to_string())
+}
+
+fn sanitize_text(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn flatten_optional_text_input(value: Option<Option<String>>) -> Option<String> {
+    value.and_then(|inner| inner.and_then(sanitize_text))
+}
+
+fn apply_optional_text_patch(
+    existing: Option<String>,
+    update: Option<Option<String>>,
+) -> Option<String> {
+    match update {
+        Some(value) => value.and_then(sanitize_text),
+        None => existing,
+    }
+}
+
+fn apply_optional_port_patch(existing: Option<u16>, update: Option<Option<u16>>) -> Option<u16> {
+    match update {
+        Some(value) => value,
+        None => existing,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -170,12 +306,14 @@ pub fn run() {
             get_alert_details,
             list_allow_rules,
             delete_allow_rule,
+            update_allow_rule,
             create_allow_rule,
             dismiss_alert,
             get_settings,
             update_settings,
             get_established_connections,
             get_recent_activity,
+            get_alert_timeline,
             execute_connection_command
         ])
         .run(tauri::generate_context!())

@@ -13,6 +13,18 @@ export interface ReputationInfo {
   checkedAt: string;
 }
 
+export interface DestinationInfo {
+  ip: string;
+  scope: string;
+  hostname: string | null;
+  domain: string | null;
+  asn: string | null;
+  organization: string | null;
+  country: string | null;
+  source: string;
+  checkedAt: string;
+}
+
 export interface ProcessIdentity {
   pid: number;
   name: string;
@@ -47,6 +59,7 @@ export interface ConnectionEvent {
   baselineHits: number;
   reasons: RiskReason[];
   reputation: ReputationInfo | null;
+  destination: DestinationInfo | null;
   suggestedFirewallRule: string | null;
   isNew: boolean;
 }
@@ -70,6 +83,7 @@ export interface AlertRecord {
 export interface AllowRule {
   id: string;
   label: string;
+  enabled: boolean;
   processName: string | null;
   signer: string | null;
   exePath: string | null;
@@ -78,7 +92,9 @@ export interface AllowRule {
   port: number | null;
   protocol: string | null;
   direction: string | null;
+  notes: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface AppSettings {
@@ -86,6 +102,9 @@ export interface AppSettings {
   retentionDays: number;
   baselineLearningThreshold: number;
   alertCooldownMinutes: number;
+  enableDestinationEnrichment: boolean;
+  destinationProvider: string;
+  destinationTtlMinutes: number;
   enableReputation: boolean;
   reputationProvider: string;
   reputationApiKey: string | null;
@@ -111,6 +130,19 @@ export interface ActivityEvent {
   timestamp: string;
   changeType: string;
   connection: ConnectionEvent;
+}
+
+export interface AlertTimelineEvent {
+  id: string;
+  alertId: string;
+  timestamp: string;
+  eventType: string;
+  status: string;
+  riskLevel: RiskLevel;
+  score: number;
+  confidence: number;
+  occurrenceCount: number;
+  summary: string;
 }
 
 export interface MonitorUpdate {

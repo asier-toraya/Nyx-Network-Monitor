@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::{
     classifier::classify_connection,
     db::Database,
+    destination::resolve_destination,
     models::{
         ActivityEvent, AlertRecord, AllowRule, AppSettings, ConnectionEvent, MonitorUpdate,
         RiskLevel, SocketSnapshot, SummaryStats, TrafficBaseline,
@@ -115,6 +116,7 @@ fn poll_once(
         let baseline_key = build_pattern_key(&socket, &process);
         let alert_key = build_alert_key(&socket, &process);
         let baseline = state.baseline_cache.read().get(&baseline_key).cloned();
+        let destination = resolve_destination(&state.database, settings, socket.remote_address.as_deref());
         let reputation = resolve_reputation(&state.database, settings, socket.remote_address.as_deref());
         let classified = classify_connection(
             &socket,
@@ -136,6 +138,7 @@ fn poll_once(
                     || existing.confidence != classified.confidence
                     || existing.baseline_hits != baseline_hits
                     || existing.process != process
+                    || existing.destination != destination
                     || existing.reputation != reputation
                     || existing.reasons != classified.reasons
             })
@@ -149,6 +152,7 @@ fn poll_once(
                     || existing.score != classified.score
                     || existing.remote_address != socket.remote_address
                     || existing.remote_port != socket.remote_port
+                    || existing.destination != destination
             })
             .unwrap_or(true);
 
@@ -170,6 +174,7 @@ fn poll_once(
             baseline_hits,
             reasons: classified.reasons.clone(),
             reputation: reputation.clone(),
+            destination: destination.clone(),
             suggested_firewall_rule: classified.suggested_firewall_rule.clone(),
             is_new: is_new_connection,
         };
@@ -259,9 +264,9 @@ fn upsert_alert(
     settings: &AppSettings,
 ) -> anyhow::Result<AlertRecord> {
     let cooldown = ChronoDuration::minutes(settings.alert_cooldown_minutes as i64);
-    let existing = state.active_alerts.read().get(alert_key).cloned();
+    let existing_alert = state.active_alerts.read().get(alert_key).cloned();
 
-    let alert = if let Some(existing) = existing {
+    let alert = if let Some(existing) = existing_alert.as_ref() {
         let same_window = now - existing.updated_at < cooldown;
         let escalated = matches!(
             (&existing.risk_level, &event.risk_level),
@@ -269,26 +274,26 @@ fn upsert_alert(
         );
 
         AlertRecord {
-            id: existing.id,
+            id: existing.id.clone(),
             alert_key: alert_key.to_string(),
             connection_event_id: event.id.clone(),
             risk_level: if escalated {
                 event.risk_level.clone()
             } else {
-                existing.risk_level
+                existing.risk_level.clone()
             },
             score: existing.score.max(event.score),
             confidence: existing.confidence.max(event.confidence),
             reasons: event.reasons.clone(),
             recommended_action: if same_window && !escalated {
-                existing.recommended_action
+                existing.recommended_action.clone()
             } else {
                 recommended_action
             },
             status: if existing.status == "new" && same_window {
                 "open".to_string()
             } else {
-                existing.status
+                existing.status.clone()
             },
             created_at: existing.created_at,
             updated_at: now,
@@ -314,6 +319,8 @@ fn upsert_alert(
     };
 
     state.database.save_alert(&alert)?;
+    let timeline_event = build_alert_timeline_event(&alert, existing_alert.as_ref(), now);
+    let _ = state.database.append_alert_timeline_event(&timeline_event);
     state
         .active_alerts
         .write()
@@ -537,6 +544,54 @@ fn build_activity_event(
         timestamp,
         change_type: change_type.to_string(),
         connection: snapshot,
+    }
+}
+
+fn build_alert_timeline_event(
+    alert: &AlertRecord,
+    previous: Option<&AlertRecord>,
+    timestamp: chrono::DateTime<Utc>,
+) -> crate::models::AlertTimelineEvent {
+    let event_type = match previous {
+        None => "created",
+        Some(existing)
+            if existing.risk_level != alert.risk_level
+                && matches!(
+                    (&existing.risk_level, &alert.risk_level),
+                    (RiskLevel::Unknown, RiskLevel::Suspicious)
+                ) =>
+        {
+            "escalated"
+        }
+        Some(_) => "updated",
+    };
+
+    let summary = match event_type {
+        "created" => format!(
+            "Alert created with score {} and {} occurrence.",
+            alert.score, alert.occurrence_count
+        ),
+        "escalated" => format!(
+            "Alert escalated to {:?} with score {} after {} occurrence(s).",
+            alert.risk_level, alert.score, alert.occurrence_count
+        ),
+        _ => format!(
+            "Alert updated to score {} with {} occurrence(s).",
+            alert.score, alert.occurrence_count
+        ),
+    };
+
+    crate::models::AlertTimelineEvent {
+        id: Uuid::new_v4().to_string(),
+        alert_id: alert.id.clone(),
+        timestamp,
+        event_type: event_type.to_string(),
+        status: alert.status.clone(),
+        risk_level: alert.risk_level.clone(),
+        score: alert.score,
+        confidence: alert.confidence,
+        occurrence_count: alert.occurrence_count,
+        summary,
     }
 }
 

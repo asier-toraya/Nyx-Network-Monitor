@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatUserContext,
   getConnectionExplanation,
+  getConnectionDestinationSummary,
   getConnectionIdentityStatus,
   getConnectionRiskLabel
 } from "../lib/connectionPresentation";
-import { executeConnectionCommand } from "../lib/tauri";
+import { executeConnectionCommand, getAlertTimeline } from "../lib/tauri";
 import type {
   AlertRecord,
+  AlertTimelineEvent,
   CommandExecutionResult,
   ConnectionCommandAction,
   ConnectionEvent
@@ -38,12 +40,51 @@ export function DetailPanel({
   const [commandResult, setCommandResult] = useState<CommandExecutionResult | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<ConnectionCommandAction | null>(null);
+  const [alertTimeline, setAlertTimeline] = useState<AlertTimelineEvent[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   useEffect(() => {
     setCommandResult(null);
     setCommandError(null);
     setRunningAction(null);
   }, [connection?.id]);
+
+  useEffect(() => {
+    if (!alert?.id) {
+      setAlertTimeline([]);
+      setTimelineError(null);
+      setTimelineLoading(false);
+      return;
+    }
+
+    let disposed = false;
+    setTimelineLoading(true);
+    setTimelineError(null);
+
+    void getAlertTimeline(alert.id, 20)
+      .then((events) => {
+        if (!disposed) {
+          setAlertTimeline(events);
+        }
+      })
+      .catch((cause) => {
+        if (!disposed) {
+          setTimelineError(
+            cause instanceof Error ? cause.message : "Failed to load alert timeline"
+          );
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setTimelineLoading(false);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [alert?.id]);
 
   const isSvchost = connection?.process.name.toLowerCase() === "svchost.exe";
   const hasLiveProcessOwner =
@@ -81,6 +122,7 @@ export function DetailPanel({
   const identityStatus = getConnectionIdentityStatus(activeConnection);
 
   const explanation = getConnectionExplanation(activeConnection);
+  const destinationSummary = getConnectionDestinationSummary(activeConnection);
 
   async function handleRunAction(action: ConnectionCommandAction) {
     setRunningAction(action);
@@ -338,6 +380,51 @@ export function DetailPanel({
           <section className="detail-section">
             <div className="detail-section__header">
               <div>
+                <p className="eyebrow">Destination</p>
+                <h3>DNS and ASN context</h3>
+              </div>
+              <span className="panel__muted">{destinationSummary}</span>
+            </div>
+
+            <div className="detail-section-grid detail-section-grid--destination">
+              <div className="detail-item">
+                <span className="detail-label">Scope</span>
+                <p>{activeConnection.destination?.scope ?? "Listener / n/a"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Resolved host</span>
+                <p>{activeConnection.destination?.hostname ?? "Not resolved"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Organization</span>
+                <p>{activeConnection.destination?.organization ?? "Not available"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">ASN</span>
+                <p>{activeConnection.destination?.asn ?? "Not available"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Domain</span>
+                <p>{activeConnection.destination?.domain ?? "Not available"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Country</span>
+                <p>{activeConnection.destination?.country ?? "Not available"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Source</span>
+                <p>{activeConnection.destination?.source ?? "No enrichment source"}</p>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Reputation</span>
+                <p>{activeConnection.reputation?.summary ?? "No reputation verdict"}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <div className="detail-section__header">
+              <div>
                 <p className="eyebrow">Assessment</p>
                 <h3>Risk factors</h3>
               </div>
@@ -352,6 +439,54 @@ export function DetailPanel({
               ))}
             </ul>
           </section>
+
+          {alert ? (
+            <section className="detail-section">
+              <div className="detail-section__header">
+                <div>
+                  <p className="eyebrow">Alert timeline</p>
+                  <h3>Investigation thread</h3>
+                </div>
+                <span className="panel__muted">
+                  {alertTimeline.length > 0
+                    ? `${alertTimeline.length} recorded events`
+                    : "No timeline entries yet"}
+                </span>
+              </div>
+
+              {timelineLoading ? <p className="empty-state">Loading alert timeline...</p> : null}
+              {timelineError ? <div className="banner-error">{timelineError}</div> : null}
+
+              {!timelineLoading && !timelineError ? (
+                alertTimeline.length > 0 ? (
+                  <ul className="timeline-list">
+                    {alertTimeline.map((event) => (
+                      <li key={event.id}>
+                        <span
+                          className={`timeline-pill timeline-pill--${event.eventType}`}
+                        >
+                          {event.eventType}
+                        </span>
+                        <div className="timeline-list__body">
+                          <strong>{event.summary}</strong>
+                          <span>
+                            {new Date(event.timestamp).toLocaleString()} | {event.status} | Score{" "}
+                            {event.score} | Confidence {event.confidence}% | Seen{" "}
+                            {event.occurrenceCount}x
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="empty-state">
+                    This connection has an alert record, but no additional timeline entries have
+                    been recorded yet.
+                  </p>
+                )
+              ) : null}
+            </section>
+          ) : null}
         </div>
       </aside>
     </div>

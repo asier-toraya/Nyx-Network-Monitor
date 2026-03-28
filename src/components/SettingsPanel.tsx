@@ -108,6 +108,47 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           />
         </label>
         <label className="settings-grid__wide settings-grid__toggle">
+          <span>Enable DNS and ASN enrichment</span>
+          <input
+            type="checkbox"
+            checked={draft.enableDestinationEnrichment}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                enableDestinationEnrichment: event.target.checked
+              })
+            }
+          />
+        </label>
+        <label>
+          Enrichment provider
+          <input
+            type="text"
+            value={draft.destinationProvider}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                destinationProvider: event.target.value
+              })
+            }
+          />
+        </label>
+        <label>
+          Enrichment TTL (minutes)
+          <input
+            type="number"
+            min={5}
+            max={10080}
+            value={draft.destinationTtlMinutes}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                destinationTtlMinutes: Number(event.target.value)
+              })
+            }
+          />
+        </label>
+        <label className="settings-grid__wide settings-grid__toggle">
           <span>Enable IP reputation lookup</span>
           <input
             type="checkbox"

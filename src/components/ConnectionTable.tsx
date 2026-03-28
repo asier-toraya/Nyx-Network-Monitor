@@ -72,7 +72,16 @@ export function ConnectionTable({
                     <td>{`${connection.localAddress}:${connection.localPort}`}</td>
                     <td>
                       {connection.remoteAddress && connection.remotePort
-                        ? `${connection.remoteAddress}:${connection.remotePort}`
+                        ? (
+                          <>
+                            <strong>{`${connection.remoteAddress}:${connection.remotePort}`}</strong>
+                            <span>
+                              {connection.destination?.hostname ??
+                                connection.destination?.organization ??
+                                "No DNS/ASN enrichment"}
+                            </span>
+                          </>
+                        )
                         : "Listener / n/a"}
                     </td>
                     <td>{`${connection.protocol} / ${connection.direction}`}</td>
