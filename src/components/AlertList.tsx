@@ -6,6 +6,7 @@ interface AlertListProps {
   alerts: AlertRecord[];
   selectedAlertId: string | null;
   onSelect: (alert: AlertRecord) => void;
+  fullHeight?: boolean;
 }
 
 const riskWeights: Record<RiskLevel, number> = {
@@ -55,7 +56,12 @@ function formatGroupSummary(alerts: AlertRecord[]) {
   return `${alerts.length} alerts | Highest ${getRiskLabel(highestRiskAlert.riskLevel)} | Seen ${totalOccurrences}x | Updated ${new Date(updatedAt).toLocaleString()}`;
 }
 
-export function AlertList({ alerts, selectedAlertId, onSelect }: AlertListProps) {
+export function AlertList({
+  alerts,
+  selectedAlertId,
+  onSelect,
+  fullHeight = false
+}: AlertListProps) {
   const groups = useMemo(() => groupAlertsByOwner(alerts), [alerts]);
   const hasGroupedAlerts = groups.some((group) => group.items.length > 1);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -91,7 +97,7 @@ export function AlertList({ alerts, selectedAlertId, onSelect }: AlertListProps)
   }
 
   return (
-    <div className="panel alert-panel">
+    <div className={`panel alert-panel ${fullHeight ? "panel--expanded" : ""}`.trim()}>
       <div className="panel__header">
         <div>
           <p className="eyebrow">Alerts</p>

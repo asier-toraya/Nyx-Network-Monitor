@@ -34,7 +34,14 @@ import type {
   SummaryStats
 } from "./types";
 
-type AppTab = "monitor" | "history" | "rules" | "settings";
+type AppTab =
+  | "dashboard"
+  | "alerts"
+  | "established"
+  | "live"
+  | "history"
+  | "rules"
+  | "settings";
 type ConnectionFilter = RiskLevel | "all";
 type SelectedConnectionSource = "live" | "history" | null;
 type MonitorStateFilter =
@@ -219,6 +226,22 @@ function matchesAlertQuery(alert: AlertRecord, query: string) {
     .includes(normalizedQuery);
 }
 
+function matchesAlertStateFilter(alert: AlertRecord, filter: MonitorStateFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  return alert.connection ? matchesStateFilter(alert.connection, filter) : false;
+}
+
+function matchesAlertDirectionFilter(alert: AlertRecord, filter: MonitorDirectionFilter) {
+  if (filter === "all") {
+    return true;
+  }
+
+  return alert.connection ? matchesDirectionFilter(alert.connection, filter) : false;
+}
+
 function matchesActivityQuery(event: ActivityEvent, query: string) {
   const normalizedQuery = normalizeQuery(query);
   if (!normalizedQuery) {
@@ -308,6 +331,14 @@ function endpointLabel(connection: ConnectionEvent, mode: "local" | "remote") {
     : "";
 }
 
+function alertEndpointLabel(alert: AlertRecord, mode: "local" | "remote") {
+  if (!alert.connection) {
+    return "";
+  }
+
+  return endpointLabel(alert.connection, mode);
+}
+
 function sortConnectionsByMode(connections: ConnectionEvent[], sortMode: MonitorSort) {
   if (sortMode === "risk") {
     return sortConnections(connections);
@@ -351,12 +382,89 @@ function sortConnectionsByMode(connections: ConnectionEvent[], sortMode: Monitor
   return sorted;
 }
 
+function sortAlertsByMode(alerts: AlertRecord[], sortMode: MonitorSort) {
+  const weights = { suspicious: 3, unknown: 2, safe: 1 };
+  const sorted = [...alerts];
+
+  sorted.sort((left, right) => {
+    if (sortMode === "risk") {
+      return (
+        weights[right.riskLevel] - weights[left.riskLevel] ||
+        right.score - left.score ||
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+      );
+    }
+
+    if (sortMode === "recent") {
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    }
+
+    if (sortMode === "process") {
+      return (
+        (left.connection?.process.name ?? "Unknown process").localeCompare(
+          right.connection?.process.name ?? "Unknown process"
+        ) ||
+        (left.connection?.pid ?? 0) - (right.connection?.pid ?? 0)
+      );
+    }
+
+    if (sortMode === "remote") {
+      return (
+        alertEndpointLabel(left, "remote").localeCompare(alertEndpointLabel(right, "remote")) ||
+        right.score - left.score
+      );
+    }
+
+    if (sortMode === "local") {
+      return (
+        alertEndpointLabel(left, "local").localeCompare(alertEndpointLabel(right, "local")) ||
+        right.score - left.score
+      );
+    }
+
+    if (sortMode === "score") {
+      return right.score - left.score || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    }
+
+    return (
+      right.confidence - left.confidence ||
+      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    );
+  });
+
+  return sorted;
+}
+
 function tabMeta(tab: AppTab) {
-  if (tab === "monitor") {
+  if (tab === "dashboard") {
     return {
       eyebrow: "Operations",
-      title: "Monitor",
+      title: "Dashboard",
       copy: "Review current sockets, live investigations and active TCP sessions."
+    };
+  }
+
+  if (tab === "alerts") {
+    return {
+      eyebrow: "Operations",
+      title: "Alerts",
+      copy: "Focus on active investigations and alert-driven triage without the dashboard split."
+    };
+  }
+
+  if (tab === "established") {
+    return {
+      eyebrow: "Operations",
+      title: "Established connections",
+      copy: "Inspect active TCP sessions in a dedicated full-height view."
+    };
+  }
+
+  if (tab === "live") {
+    return {
+      eyebrow: "Operations",
+      title: "Live connections",
+      copy: "Review the full live socket inventory with more room for the connection table."
     };
   }
 
@@ -396,7 +504,7 @@ export default function App() {
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<AppTab>("monitor");
+  const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const [activeFilter, setActiveFilter] = useState<ConnectionFilter>("all");
   const [monitorQuery, setMonitorQuery] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
@@ -508,29 +616,45 @@ export default function App() {
     [connections, monitorQuery]
   );
 
-  const filteredConnections = useMemo(() => {
-    const filtered = searchedConnections.filter((connection) => {
-      const riskMatches =
-        activeFilter === "all" ? true : connection.riskLevel === activeFilter;
-
-      return (
-        riskMatches &&
+  const tabFilteredConnections = useMemo(() => {
+    const filtered = searchedConnections.filter(
+      (connection) =>
         matchesStateFilter(connection, stateFilter) &&
         matchesDirectionFilter(connection, directionFilter)
-      );
-    });
+    );
 
     return sortConnectionsByMode(filtered, sortMode);
-  }, [activeFilter, directionFilter, searchedConnections, sortMode, stateFilter]);
+  }, [directionFilter, searchedConnections, sortMode, stateFilter]);
+
+  const filteredConnections = useMemo(
+    () =>
+      tabFilteredConnections.filter((connection) =>
+        activeFilter === "all" ? true : connection.riskLevel === activeFilter
+      ),
+    [activeFilter, tabFilteredConnections]
+  );
 
   const filteredAlerts = useMemo(
-    () => alerts.filter((alert) => matchesAlertQuery(alert, monitorQuery)),
-    [alerts, monitorQuery]
+    () =>
+      sortAlertsByMode(
+        alerts.filter(
+          (alert) =>
+            matchesAlertQuery(alert, monitorQuery) &&
+            matchesAlertStateFilter(alert, stateFilter) &&
+            matchesAlertDirectionFilter(alert, directionFilter)
+        ),
+        sortMode
+      ),
+    [alerts, directionFilter, monitorQuery, sortMode, stateFilter]
   );
 
   const establishedConnections = useMemo(
     () => filteredConnections.filter((connection) => isEstablishedTcp(connection)),
     [filteredConnections]
+  );
+  const tabEstablishedConnections = useMemo(
+    () => tabFilteredConnections.filter((connection) => isEstablishedTcp(connection)),
+    [tabFilteredConnections]
   );
 
   const historyEvents = useMemo(
@@ -732,8 +856,69 @@ export default function App() {
   }
 
   function toggleFilter(next: ConnectionFilter) {
-    setActiveTab("monitor");
+    setActiveTab("dashboard");
     setActiveFilter((current) => (current === next ? "all" : next));
+  }
+
+  function renderConnectionControls(searchPlaceholder: string) {
+    return (
+      <section className="monitor-controls">
+        <label className="monitor-controls__field">
+          <span className="detail-label">State</span>
+          <select
+            value={stateFilter}
+            onChange={(event) => setStateFilter(event.target.value as MonitorStateFilter)}
+          >
+            <option value="all">All states</option>
+            <option value="active">Active</option>
+            <option value="passive">Passive</option>
+            <option value="established">Established</option>
+            <option value="listening">Listening</option>
+            <option value="closed">Closed / cleanup</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field">
+          <span className="detail-label">Direction</span>
+          <select
+            value={directionFilter}
+            onChange={(event) =>
+              setDirectionFilter(event.target.value as MonitorDirectionFilter)
+            }
+          >
+            <option value="all">All directions</option>
+            <option value="incoming">Incoming</option>
+            <option value="outgoing">Outgoing</option>
+            <option value="listening">Listening</option>
+            <option value="closing">Closing</option>
+            <option value="closed">Closed</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field">
+          <span className="detail-label">Sort</span>
+          <select
+            value={sortMode}
+            onChange={(event) => setSortMode(event.target.value as MonitorSort)}
+          >
+            <option value="risk">Highest risk</option>
+            <option value="recent">Most recent</option>
+            <option value="process">Process</option>
+            <option value="remote">Remote endpoint</option>
+            <option value="local">Local endpoint</option>
+            <option value="score">Risk score</option>
+            <option value="confidence">Confidence</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field monitor-controls__field--search">
+          <span className="detail-label">Search</span>
+          <input
+            type="search"
+            value={monitorQuery}
+            onChange={(event) => setMonitorQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </label>
+      </section>
+    );
   }
 
   return (
@@ -748,10 +933,31 @@ export default function App() {
         <nav className="app-nav" aria-label="Application sections">
           <button
             type="button"
-            className={`app-nav__button ${activeTab === "monitor" ? "is-active" : ""}`}
-            onClick={() => setActiveTab("monitor")}
+            className={`app-nav__button ${activeTab === "dashboard" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("dashboard")}
           >
-            Monitor
+            Dashboard
+          </button>
+          <button
+            type="button"
+            className={`app-nav__button app-nav__button--monitoring ${activeTab === "alerts" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("alerts")}
+          >
+            Alerts
+          </button>
+          <button
+            type="button"
+            className={`app-nav__button app-nav__button--monitoring ${activeTab === "established" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("established")}
+          >
+            Established connections
+          </button>
+          <button
+            type="button"
+            className={`app-nav__button app-nav__button--monitoring ${activeTab === "live" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("live")}
+          >
+            Live connections
           </button>
           <button
             type="button"
@@ -799,24 +1005,11 @@ export default function App() {
             <p className="page-header__copy">{currentTab.copy}</p>
           </div>
 
-          {activeTab === "monitor" ? (
-            <div className="page-header__aside page-header__aside--search">
-              <label className="page-search">
-                <span className="sr-only">Search current connections</span>
-                <input
-                  type="search"
-                  value={monitorQuery}
-                  onChange={(event) => setMonitorQuery(event.target.value)}
-                  placeholder="Search process, PID, IP, port or reason"
-                />
-              </label>
+          {activeTab === "dashboard" ? (
+            <div className="page-header__aside">
               <div className="page-header__meta">
                 <span className="page-header__meta-label">Scope</span>
                 <strong>{filterLabel(activeFilter)}</strong>
-              </div>
-              <div className="page-header__meta">
-                <span className="page-header__meta-label">Visible</span>
-                <strong>{`${filteredConnections.length} of ${connections.length}`}</strong>
               </div>
             </div>
           ) : null}
@@ -842,7 +1035,7 @@ export default function App() {
 
         {error ? <div className="banner-error">{error}</div> : null}
 
-        {activeTab === "monitor" ? (
+        {activeTab === "dashboard" ? (
           <>
             <section className="summary-grid">
               <SummaryCard
@@ -883,57 +1076,7 @@ export default function App() {
               />
             </section>
 
-            <section className="monitor-controls">
-              <label className="monitor-controls__field">
-                <span className="detail-label">State</span>
-                <select
-                  value={stateFilter}
-                  onChange={(event) => setStateFilter(event.target.value as MonitorStateFilter)}
-                >
-                  <option value="all">All states</option>
-                  <option value="active">Active</option>
-                  <option value="passive">Passive</option>
-                  <option value="established">Established</option>
-                  <option value="listening">Listening</option>
-                  <option value="closed">Closed / cleanup</option>
-                </select>
-              </label>
-              <label className="monitor-controls__field">
-                <span className="detail-label">Direction</span>
-                <select
-                  value={directionFilter}
-                  onChange={(event) =>
-                    setDirectionFilter(event.target.value as MonitorDirectionFilter)
-                  }
-                >
-                  <option value="all">All directions</option>
-                  <option value="incoming">Incoming</option>
-                  <option value="outgoing">Outgoing</option>
-                  <option value="listening">Listening</option>
-                  <option value="closing">Closing</option>
-                  <option value="closed">Closed</option>
-                </select>
-              </label>
-              <label className="monitor-controls__field">
-                <span className="detail-label">Sort</span>
-                <select
-                  value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value as MonitorSort)}
-                >
-                  <option value="risk">Highest risk</option>
-                  <option value="recent">Most recent</option>
-                  <option value="process">Process</option>
-                  <option value="remote">Remote endpoint</option>
-                  <option value="local">Local endpoint</option>
-                  <option value="score">Risk score</option>
-                  <option value="confidence">Confidence</option>
-                </select>
-              </label>
-              <div className="monitor-controls__meta">
-                <span className="detail-label">Result set</span>
-                <strong>{filteredConnections.length}</strong>
-              </div>
-            </section>
+            {renderConnectionControls("Search process, PID, IP, port or reason")}
 
             <section className="monitor-workspace">
               <AlertList
@@ -966,6 +1109,47 @@ export default function App() {
             selectedId={selectedActivityId}
             onSelect={handleSelectHistoryEvent}
           />
+        ) : null}
+
+        {activeTab === "alerts" ? (
+          <>
+            {renderConnectionControls("Search process, PID, IP, port or alert reason")}
+            <AlertList
+              alerts={filteredAlerts}
+              selectedAlertId={selectedAlert?.id ?? null}
+              onSelect={handleSelectAlert}
+              fullHeight
+            />
+          </>
+        ) : null}
+
+        {activeTab === "established" ? (
+          <>
+            {renderConnectionControls("Search process, PID, IP, port or reason")}
+            <EstablishedConnectionsPanel
+              connections={tabEstablishedConnections}
+              selectedId={
+                selectedConnectionSource === "live" ? selectedConnection?.id ?? null : null
+              }
+              onSelect={handleSelectLiveConnection}
+              onOpenModal={() => void handleOpenEstablishedConnections()}
+              fullHeight
+            />
+          </>
+        ) : null}
+
+        {activeTab === "live" ? (
+          <>
+            {renderConnectionControls("Search process, PID, IP, port or reason")}
+            <ConnectionTable
+              connections={tabFilteredConnections}
+              selectedId={
+                selectedConnectionSource === "live" ? selectedConnection?.id ?? null : null
+              }
+              onSelect={handleSelectLiveConnection}
+              fullHeight
+            />
+          </>
         ) : null}
 
         {activeTab === "rules" ? (

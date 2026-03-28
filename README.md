@@ -390,7 +390,7 @@ sentinel-desk.db
 En Windows, normalmente acabara bajo una ruta similar a:
 
 ```text
-%APPDATA%\com.asier.sentineldesk\sentinel-desk.db
+%APPDATA%\com.<user>.sentineldesk\sentinel-desk.db
 ```
 
 ### Tablas principales

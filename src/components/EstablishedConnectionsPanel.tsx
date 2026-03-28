@@ -9,6 +9,7 @@ interface EstablishedConnectionsPanelProps {
   selectedId: string | null;
   onSelect: (connection: ConnectionEvent) => void;
   onOpenModal: () => void;
+  fullHeight?: boolean;
 }
 
 const riskWeights: Record<RiskLevel, number> = {
@@ -61,7 +62,8 @@ export function EstablishedConnectionsPanel({
   connections,
   selectedId,
   onSelect,
-  onOpenModal
+  onOpenModal,
+  fullHeight = false
 }: EstablishedConnectionsPanelProps) {
   const groups = useMemo(() => groupConnectionsByOwner(connections), [connections]);
   const hasGroupedConnections = groups.some((group) => group.items.length > 1);
@@ -103,7 +105,9 @@ export function EstablishedConnectionsPanel({
   }
 
   return (
-    <div className="panel table-panel established-panel">
+    <div
+      className={`panel table-panel established-panel ${fullHeight ? "panel--expanded" : ""}`.trim()}
+    >
       <div className="panel__header">
         <div>
           <p className="eyebrow">Established connections</p>

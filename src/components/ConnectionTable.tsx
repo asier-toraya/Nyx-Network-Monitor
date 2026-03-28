@@ -7,6 +7,7 @@ interface ConnectionTableProps {
   connections: ConnectionEvent[];
   selectedId: string | null;
   onSelect: (connection: ConnectionEvent) => void;
+  fullHeight?: boolean;
 }
 
 const riskWeights: Record<RiskLevel, number> = {
@@ -58,7 +59,8 @@ function formatGroupSummary(connections: ConnectionEvent[]) {
 export function ConnectionTable({
   connections,
   selectedId,
-  onSelect
+  onSelect,
+  fullHeight = false
 }: ConnectionTableProps) {
   const groups = useMemo(() => groupConnectionsByOwner(connections), [connections]);
   const hasGroupedConnections = groups.some((group) => group.items.length > 1);
@@ -121,7 +123,7 @@ export function ConnectionTable({
   }
 
   return (
-    <div className="panel table-panel">
+    <div className={`panel table-panel ${fullHeight ? "panel--expanded" : ""}`.trim()}>
       <div className="panel__header">
         <div>
           <p className="eyebrow">Live connections</p>
