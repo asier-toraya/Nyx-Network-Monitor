@@ -435,6 +435,62 @@ function sortAlertsByMode(alerts: AlertRecord[], sortMode: MonitorSort) {
   return sorted;
 }
 
+function sortActivityEventsByMode(events: ActivityEvent[], sortMode: MonitorSort) {
+  const weights = { suspicious: 3, unknown: 2, safe: 1 };
+  const sorted = [...events];
+
+  sorted.sort((left, right) => {
+    if (sortMode === "risk") {
+      return (
+        weights[right.connection.riskLevel] - weights[left.connection.riskLevel] ||
+        right.connection.score - left.connection.score ||
+        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+      );
+    }
+
+    if (sortMode === "recent") {
+      return new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime();
+    }
+
+    if (sortMode === "process") {
+      return (
+        left.connection.process.name.localeCompare(right.connection.process.name) ||
+        left.connection.pid - right.connection.pid
+      );
+    }
+
+    if (sortMode === "remote") {
+      return (
+        endpointLabel(left.connection, "remote").localeCompare(
+          endpointLabel(right.connection, "remote")
+        ) || right.connection.score - left.connection.score
+      );
+    }
+
+    if (sortMode === "local") {
+      return (
+        endpointLabel(left.connection, "local").localeCompare(
+          endpointLabel(right.connection, "local")
+        ) || right.connection.score - left.connection.score
+      );
+    }
+
+    if (sortMode === "score") {
+      return (
+        right.connection.score - left.connection.score ||
+        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+      );
+    }
+
+    return (
+      right.connection.confidence - left.connection.confidence ||
+      new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+    );
+  });
+
+  return sorted;
+}
+
 function tabMeta(tab: AppTab) {
   if (tab === "dashboard") {
     return {
@@ -511,6 +567,10 @@ export default function App() {
   const [stateFilter, setStateFilter] = useState<MonitorStateFilter>("all");
   const [directionFilter, setDirectionFilter] = useState<MonitorDirectionFilter>("all");
   const [sortMode, setSortMode] = useState<MonitorSort>("risk");
+  const [historyStateFilter, setHistoryStateFilter] = useState<MonitorStateFilter>("all");
+  const [historyDirectionFilter, setHistoryDirectionFilter] =
+    useState<MonitorDirectionFilter>("all");
+  const [historySortMode, setHistorySortMode] = useState<MonitorSort>("recent");
   const [establishedResult, setEstablishedResult] = useState<CommandExecutionResult | null>(null);
   const [establishedOpen, setEstablishedOpen] = useState(false);
   const [establishedLoading, setEstablishedLoading] = useState(false);
@@ -658,8 +718,17 @@ export default function App() {
   );
 
   const historyEvents = useMemo(
-    () => activity.filter((event) => matchesActivityQuery(event, historyQuery)),
-    [activity, historyQuery]
+    () =>
+      sortActivityEventsByMode(
+        activity.filter(
+          (event) =>
+            matchesActivityQuery(event, historyQuery) &&
+            matchesStateFilter(event.connection, historyStateFilter) &&
+            matchesDirectionFilter(event.connection, historyDirectionFilter)
+        ),
+        historySortMode
+      ),
+    [activity, historyDirectionFilter, historyQuery, historySortMode, historyStateFilter]
   );
 
   useEffect(() => {
@@ -921,6 +990,67 @@ export default function App() {
     );
   }
 
+  function renderHistoryControls() {
+    return (
+      <section className="monitor-controls">
+        <label className="monitor-controls__field">
+          <span className="detail-label">State</span>
+          <select
+            value={historyStateFilter}
+            onChange={(event) => setHistoryStateFilter(event.target.value as MonitorStateFilter)}
+          >
+            <option value="all">All states</option>
+            <option value="active">Active</option>
+            <option value="passive">Passive</option>
+            <option value="established">Established</option>
+            <option value="listening">Listening</option>
+            <option value="closed">Closed / cleanup</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field">
+          <span className="detail-label">Direction</span>
+          <select
+            value={historyDirectionFilter}
+            onChange={(event) =>
+              setHistoryDirectionFilter(event.target.value as MonitorDirectionFilter)
+            }
+          >
+            <option value="all">All directions</option>
+            <option value="incoming">Incoming</option>
+            <option value="outgoing">Outgoing</option>
+            <option value="listening">Listening</option>
+            <option value="closing">Closing</option>
+            <option value="closed">Closed</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field">
+          <span className="detail-label">Sort</span>
+          <select
+            value={historySortMode}
+            onChange={(event) => setHistorySortMode(event.target.value as MonitorSort)}
+          >
+            <option value="recent">Most recent</option>
+            <option value="risk">Highest risk</option>
+            <option value="process">Process</option>
+            <option value="remote">Remote endpoint</option>
+            <option value="local">Local endpoint</option>
+            <option value="score">Risk score</option>
+            <option value="confidence">Confidence</option>
+          </select>
+        </label>
+        <label className="monitor-controls__field monitor-controls__field--search">
+          <span className="detail-label">Search</span>
+          <input
+            type="search"
+            value={historyQuery}
+            onChange={(event) => setHistoryQuery(event.target.value)}
+            placeholder="Search process, change type, IP, port or reason"
+          />
+        </label>
+      </section>
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="app-sidebar">
@@ -1014,23 +1144,6 @@ export default function App() {
             </div>
           ) : null}
 
-          {activeTab === "history" ? (
-            <div className="page-header__aside page-header__aside--search">
-              <label className="page-search">
-                <span className="sr-only">Search activity history</span>
-                <input
-                  type="search"
-                  value={historyQuery}
-                  onChange={(event) => setHistoryQuery(event.target.value)}
-                  placeholder="Search process, change type, IP, port or reason"
-                />
-              </label>
-              <div className="page-header__meta">
-                <span className="page-header__meta-label">Visible</span>
-                <strong>{`${historyEvents.length} of ${activity.length}`}</strong>
-              </div>
-            </div>
-          ) : null}
         </header>
 
         {error ? <div className="banner-error">{error}</div> : null}
@@ -1104,11 +1217,14 @@ export default function App() {
         ) : null}
 
         {activeTab === "history" ? (
-          <ActivityHistoryPanel
-            events={historyEvents}
-            selectedId={selectedActivityId}
-            onSelect={handleSelectHistoryEvent}
-          />
+          <>
+            {renderHistoryControls()}
+            <ActivityHistoryPanel
+              events={historyEvents}
+              selectedId={selectedActivityId}
+              onSelect={handleSelectHistoryEvent}
+            />
+          </>
         ) : null}
 
         {activeTab === "alerts" ? (
