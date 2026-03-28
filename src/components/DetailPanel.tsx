@@ -19,6 +19,7 @@ interface DetailPanelProps {
   connection: ConnectionEvent | null;
   alert: AlertRecord | null;
   onAllow: (connection: ConnectionEvent) => void;
+  onAllowProcess: (connection: ConnectionEvent) => void;
   onDismiss: (alert: AlertRecord) => void;
   onCopyCommand: (value: string) => void;
   onClose: () => void;
@@ -33,6 +34,7 @@ export function DetailPanel({
   connection,
   alert,
   onAllow,
+  onAllowProcess,
   onDismiss,
   onCopyCommand,
   onClose
@@ -286,6 +288,13 @@ export function DetailPanel({
                 onClick={() => onAllow(activeConnection)}
               >
                 Mark as trusted
+              </button>
+              <button
+                type="button"
+                className="action-button action-button--primary-soft"
+                onClick={() => onAllowProcess(activeConnection)}
+              >
+                Trust whole process
               </button>
               {alert ? (
                 <button type="button" className="action-button" onClick={() => onDismiss(alert)}>

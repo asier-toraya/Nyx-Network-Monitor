@@ -254,9 +254,13 @@ button {
 
 .monitor-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 220px)) minmax(140px, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 190px)) minmax(220px, 1fr);
   gap: 0.75rem;
   align-items: end;
+}
+
+.monitor-controls--no-risk {
+  grid-template-columns: repeat(3, minmax(0, 190px)) minmax(220px, 1fr);
 }
 
 .monitor-controls__field,
@@ -948,6 +952,12 @@ button.summary-card {
   border-color: #b8c9dc;
   background: var(--accent-soft);
   color: #315c86;
+}
+
+.action-button--primary-soft {
+  border-color: #c9d7e6;
+  background: #edf3f9;
+  color: #3e5f7f;
 }
 
 .action-button--danger {

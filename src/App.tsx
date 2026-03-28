@@ -570,12 +570,45 @@ export default function App() {
   const [historyStateFilter, setHistoryStateFilter] = useState<MonitorStateFilter>("all");
   const [historyDirectionFilter, setHistoryDirectionFilter] =
     useState<MonitorDirectionFilter>("all");
+  const [historyRiskFilter, setHistoryRiskFilter] = useState<ConnectionFilter>("all");
   const [historySortMode, setHistorySortMode] = useState<MonitorSort>("recent");
   const [establishedResult, setEstablishedResult] = useState<CommandExecutionResult | null>(null);
   const [establishedOpen, setEstablishedOpen] = useState(false);
   const [establishedLoading, setEstablishedLoading] = useState(false);
   const [establishedError, setEstablishedError] = useState<string | null>(null);
   const currentTab = tabMeta(activeTab);
+
+  function buildStrictAllowRule(connection: ConnectionEvent): Partial<AllowRule> {
+    return {
+      label: `${connection.process.name} -> ${connection.remoteAddress ?? "listener"}`,
+      enabled: true,
+      processName: connection.process.name,
+      signer: connection.process.signer,
+      exePath: connection.process.exePath,
+      sha256: connection.process.sha256,
+      remotePattern: connection.remoteAddress,
+      port: connection.remotePort ?? connection.localPort,
+      protocol: connection.protocol,
+      direction: connection.direction,
+      notes: `Created from connection inspector on ${new Date().toLocaleString()}`
+    };
+  }
+
+  function buildProcessAllowRule(connection: ConnectionEvent): Partial<AllowRule> {
+    return {
+      label: `Trusted process ${connection.process.name}`,
+      enabled: true,
+      processName: connection.process.name,
+      signer: connection.process.signer,
+      exePath: connection.process.exePath,
+      sha256: connection.process.sha256,
+      remotePattern: null,
+      port: null,
+      protocol: null,
+      direction: null,
+      notes: `Created as a process-wide trust rule on ${new Date().toLocaleString()}`
+    };
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -676,25 +709,42 @@ export default function App() {
     [connections, monitorQuery]
   );
 
+  const riskFilteredConnections = useMemo(
+    () =>
+      searchedConnections.filter((connection) =>
+        activeFilter === "all" ? true : connection.riskLevel === activeFilter
+      ),
+    [activeFilter, searchedConnections]
+  );
+
   const tabFilteredConnections = useMemo(() => {
-    const filtered = searchedConnections.filter(
+    const filtered = riskFilteredConnections.filter(
       (connection) =>
         matchesStateFilter(connection, stateFilter) &&
         matchesDirectionFilter(connection, directionFilter)
     );
 
     return sortConnectionsByMode(filtered, sortMode);
-  }, [directionFilter, searchedConnections, sortMode, stateFilter]);
+  }, [directionFilter, riskFilteredConnections, sortMode, stateFilter]);
 
-  const filteredConnections = useMemo(
-    () =>
-      tabFilteredConnections.filter((connection) =>
-        activeFilter === "all" ? true : connection.riskLevel === activeFilter
-      ),
-    [activeFilter, tabFilteredConnections]
-  );
+  const filteredConnections = useMemo(() => tabFilteredConnections, [tabFilteredConnections]);
 
   const filteredAlerts = useMemo(
+    () =>
+      sortAlertsByMode(
+        alerts.filter(
+          (alert) =>
+            (activeFilter === "all" ? true : alert.riskLevel === activeFilter) &&
+            matchesAlertQuery(alert, monitorQuery) &&
+            matchesAlertStateFilter(alert, stateFilter) &&
+            matchesAlertDirectionFilter(alert, directionFilter)
+        ),
+        sortMode
+      ),
+    [activeFilter, alerts, directionFilter, monitorQuery, sortMode, stateFilter]
+  );
+
+  const tabFilteredAlerts = useMemo(
     () =>
       sortAlertsByMode(
         alerts.filter(
@@ -722,13 +772,23 @@ export default function App() {
       sortActivityEventsByMode(
         activity.filter(
           (event) =>
+            (historyRiskFilter === "all"
+              ? true
+              : event.connection.riskLevel === historyRiskFilter) &&
             matchesActivityQuery(event, historyQuery) &&
             matchesStateFilter(event.connection, historyStateFilter) &&
             matchesDirectionFilter(event.connection, historyDirectionFilter)
         ),
         historySortMode
       ),
-    [activity, historyDirectionFilter, historyQuery, historySortMode, historyStateFilter]
+    [
+      activity,
+      historyDirectionFilter,
+      historyQuery,
+      historyRiskFilter,
+      historySortMode,
+      historyStateFilter
+    ]
   );
 
   useEffect(() => {
@@ -791,19 +851,20 @@ export default function App() {
   }
 
   async function handleAllow(connection: ConnectionEvent) {
-    const created = await createAllowRule({
-      label: `${connection.process.name} -> ${connection.remoteAddress ?? "listener"}`,
-      enabled: true,
-      processName: connection.process.name,
-      signer: connection.process.signer,
-      exePath: connection.process.exePath,
-      sha256: connection.process.sha256,
-      remotePattern: connection.remoteAddress,
-      port: connection.remotePort ?? connection.localPort,
-      protocol: connection.protocol,
-      direction: connection.direction,
-      notes: `Created from connection inspector on ${new Date().toLocaleString()}`
-    });
+    const created = await createAllowRule(buildStrictAllowRule(connection));
+    setAllowRules((current) => [created, ...current]);
+  }
+
+  async function handleAllowProcess(connection: ConnectionEvent) {
+    const confirmed = window.confirm(
+      `Trust the whole process "${connection.process.name}"? This will trust future connections from the same process identity, not just the current endpoint.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const created = await createAllowRule(buildProcessAllowRule(connection));
     setAllowRules((current) => [created, ...current]);
   }
 
@@ -929,9 +990,30 @@ export default function App() {
     setActiveFilter((current) => (current === next ? "all" : next));
   }
 
-  function renderConnectionControls(searchPlaceholder: string) {
+  function renderConnectionControls(
+    searchPlaceholder: string,
+    options?: { showRiskFilter?: boolean }
+  ) {
+    const showRiskFilter = options?.showRiskFilter ?? true;
+
     return (
-      <section className="monitor-controls">
+      <section
+        className={`monitor-controls ${showRiskFilter ? "" : "monitor-controls--no-risk"}`.trim()}
+      >
+        {showRiskFilter ? (
+          <label className="monitor-controls__field">
+            <span className="detail-label">Risk</span>
+            <select
+              value={activeFilter}
+              onChange={(event) => setActiveFilter(event.target.value as ConnectionFilter)}
+            >
+              <option value="all">All risk levels</option>
+              <option value="safe">Secure</option>
+              <option value="unknown">Unidentified</option>
+              <option value="suspicious">Suspicious</option>
+            </select>
+          </label>
+        ) : null}
         <label className="monitor-controls__field">
           <span className="detail-label">State</span>
           <select
@@ -993,6 +1075,18 @@ export default function App() {
   function renderHistoryControls() {
     return (
       <section className="monitor-controls">
+        <label className="monitor-controls__field">
+          <span className="detail-label">Risk</span>
+          <select
+            value={historyRiskFilter}
+            onChange={(event) => setHistoryRiskFilter(event.target.value as ConnectionFilter)}
+          >
+            <option value="all">All risk levels</option>
+            <option value="safe">Secure</option>
+            <option value="unknown">Unidentified</option>
+            <option value="suspicious">Suspicious</option>
+          </select>
+        </label>
         <label className="monitor-controls__field">
           <span className="detail-label">State</span>
           <select
@@ -1229,9 +1323,11 @@ export default function App() {
 
         {activeTab === "alerts" ? (
           <>
-            {renderConnectionControls("Search process, PID, IP, port or alert reason")}
+            {renderConnectionControls("Search process, PID, IP, port or alert reason", {
+              showRiskFilter: false
+            })}
             <AlertList
-              alerts={filteredAlerts}
+              alerts={tabFilteredAlerts}
               selectedAlertId={selectedAlert?.id ?? null}
               onSelect={handleSelectAlert}
               fullHeight
@@ -1285,6 +1381,7 @@ export default function App() {
             connection={selectedConnection}
             alert={selectedAlert}
             onAllow={handleAllow}
+            onAllowProcess={handleAllowProcess}
             onDismiss={handleDismiss}
             onCopyCommand={handleCopyFirewallRule}
             onClose={handleCloseDetails}
