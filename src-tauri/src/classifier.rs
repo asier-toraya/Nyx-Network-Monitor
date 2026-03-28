@@ -749,14 +749,14 @@ fn build_firewall_suggestion(socket: &SocketSnapshot) -> Option<String> {
     if let Some(remote) = socket.remote_address.as_deref() {
         if !is_local_or_private(remote) {
             return Some(format!(
-                "New-NetFirewallRule -DisplayName \"Sentinel Desk Block {remote}\" -Direction Outbound -RemoteAddress {remote} -Action Block"
+                "New-NetFirewallRule -DisplayName \"Nyx Net Sentinel Block {remote}\" -Direction Outbound -RemoteAddress {remote} -Action Block"
             ));
         }
     }
 
     if socket.direction == "listening" {
         return Some(format!(
-            "New-NetFirewallRule -DisplayName \"Sentinel Desk Block Port {port}\" -Direction Inbound -Protocol {protocol} -LocalPort {port} -Action Block",
+            "New-NetFirewallRule -DisplayName \"Nyx Net Sentinel Block Port {port}\" -Direction Inbound -Protocol {protocol} -LocalPort {port} -Action Block",
             port = socket.local_port,
             protocol = socket.protocol.to_uppercase()
         ));

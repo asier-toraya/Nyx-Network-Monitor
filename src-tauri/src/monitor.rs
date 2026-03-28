@@ -80,7 +80,7 @@ pub fn start_monitor(app: AppHandle, state: AppState) {
             match poll_once(&app, &state, &mut previous, &mut system, &settings, &allow_rules) {
                 Ok(()) => {}
                 Err(error) => {
-                    eprintln!("sentinel-desk poll failed: {error:#}");
+                    eprintln!("nyx-net-sentinel poll failed: {error:#}");
                 }
             }
 

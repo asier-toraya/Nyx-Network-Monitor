@@ -1,8 +1,9 @@
 [package]
-name = "sentinel-desk"
+name = "nyx-net-sentinel"
 version = "0.1.0"
-description = "Windows-first desktop network monitor with readable risk scoring"
-authors = ["Codex"]
+description = "Nyx Net Sentinel is a Windows-first desktop network monitor with readable risk scoring"
+authors = ["Asier Gonzalez"]
+homepage = "https://github.com/asier-toraya"
 edition = "2021"
 
 [lib]
@@ -29,4 +30,3 @@ uuid = { version = "1.16.0", features = ["serde", "v4"] }
 
 [dev-dependencies]
 tempfile = "3.19.1"
-

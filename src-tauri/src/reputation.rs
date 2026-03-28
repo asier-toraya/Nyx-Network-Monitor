@@ -26,7 +26,7 @@ pub fn resolve_reputation(
     }
 
     let api_key = settings.reputation_api_key.as_deref()?;
-    let client = Client::builder().user_agent("sentinel-desk/0.1.0").build().ok()?;
+    let client = Client::builder().user_agent("nyx-net-sentinel/0.1.0").build().ok()?;
     let response = client
         .get("https://api.abuseipdb.com/api/v2/check")
         .query(&[("ipAddress", remote_ip), ("maxAgeInDays", "30")])
@@ -82,4 +82,3 @@ struct AbuseIpDbData {
     abuse_confidence_score: i32,
     total_reports: i32,
 }
-

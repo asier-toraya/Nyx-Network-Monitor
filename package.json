@@ -1,5 +1,7 @@
 {
-  "name": "sentinel-desk",
+  "name": "nyx-net-sentinel",
+  "author": "Asier Gonzalez",
+  "homepage": "https://github.com/asier-toraya",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -24,4 +26,3 @@
     "vite": "^7.0.6"
   }
 }
-

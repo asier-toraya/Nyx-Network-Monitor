@@ -131,7 +131,7 @@ fn resolve_reverse_dns(ip: &str) -> Option<String> {
 
 fn fetch_ipwhois(ip: &str) -> Option<IpWhoisResponse> {
     let client = Client::builder()
-        .user_agent("sentinel-desk/0.1.0")
+        .user_agent("nyx-net-sentinel/0.1.0")
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
@@ -158,4 +158,3 @@ struct IpWhoisConnection {
     org: Option<String>,
     domain: Option<String>,
 }
-

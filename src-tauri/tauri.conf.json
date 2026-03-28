@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Sentinel Desk",
+  "productName": "Nyx Net Sentinel",
   "version": "0.1.0",
   "identifier": "com.asier.sentineldesk",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Sentinel Desk",
+        "title": "Nyx Net Sentinel",
         "width": 1600,
         "height": 980,
         "minWidth": 1180,
