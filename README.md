@@ -7,6 +7,12 @@ Este proyecto nace con una idea muy concreta: convertir información técnica qu
 Autor: Asier Gonzalez  
 GitHub: https://github.com/asier-toraya
 
+![alt text](dashboard.png)
+
+
+**Más imagenes al final**
+
+
 ## Qué es
 
 Nyx Net Sentinel combina una interfaz de escritorio construida con Tauri y React con un motor en Rust que recopila información de red del sistema, la enriquece con contexto del proceso y del destino, y la clasifica en niveles de riesgo comprensibles.
@@ -250,3 +256,9 @@ Actualmente dispone de:
 Este repositorio no busca ser un simple visor de puertos. La intención es construir una herramienta de análisis de red local que resulte práctica, legible y agradable de usar, especialmente para revisar procesos, conexiones y señales de riesgo de una manera más ordenada.
 
 En ese sentido, Nyx Net Sentinel está planteado como un proyecto serio, pero también como una propuesta muy personal de cómo debería sentirse una herramienta de monitorización moderna en escritorio.
+
+
+![alt text](details.png)
+![alt text](established-raw.png)
+![alt text](liveconnections.png)
+![alt text](settings.png)
