@@ -1,0 +1,32 @@
+[package]
+name = "sentinel-desk"
+version = "0.1.0"
+description = "Windows-first desktop network monitor with readable risk scoring"
+authors = ["Codex"]
+edition = "2021"
+
+[lib]
+name = "sentinel_desk_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.2", features = [] }
+
+[dependencies]
+anyhow = "1.0.98"
+chrono = { version = "0.4.41", features = ["serde"] }
+hex = "0.4.3"
+netstat2 = "0.11.1"
+parking_lot = "0.12.4"
+reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+sysinfo = "0.35.2"
+tauri = { version = "2.3.1", features = [] }
+uuid = { version = "1.16.0", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3.19.1"
+
