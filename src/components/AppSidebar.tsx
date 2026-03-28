@@ -36,9 +36,8 @@ export function AppSidebar({
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <p className="sidebar-brand__eyebrow">Sentinel Desk</p>
-        <strong>Network security</strong>
-        <span>Desktop monitor</span>
+        <p className="sidebar-brand__eyebrow">NYX NET Sentinel</p>
+        <strong>NETWORK MONITOR</strong>
       </div>
 
       <nav className="app-nav" aria-label="Application sections">

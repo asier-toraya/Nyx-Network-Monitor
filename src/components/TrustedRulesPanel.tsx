@@ -129,10 +129,11 @@ export function TrustedRulesPanel({
         </div>
       ) : (
         <div className="rule-list rule-list--standalone">
-          {filteredRules.map((rule) => (
+          {filteredRules.map((rule, index) => (
             <TrustedRuleItem
               key={rule.id}
               rule={rule}
+              isAlternatingTone={index % 2 === 1}
               isOpen={openRuleId === rule.id}
               isEditing={editingRuleId === rule.id && draft !== null}
               isSaving={savingRuleId === rule.id}

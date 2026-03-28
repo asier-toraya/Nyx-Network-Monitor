@@ -7,6 +7,7 @@ import type { AllowRule } from "../types";
 
 interface TrustedRuleItemProps {
   rule: AllowRule;
+  isAlternatingTone: boolean;
   isOpen: boolean;
   isEditing: boolean;
   isSaving: boolean;
@@ -22,6 +23,7 @@ interface TrustedRuleItemProps {
 
 export function TrustedRuleItem({
   rule,
+  isAlternatingTone,
   isOpen,
   isEditing,
   isSaving,
@@ -35,7 +37,9 @@ export function TrustedRuleItem({
   onDraftChange
 }: TrustedRuleItemProps) {
   return (
-    <article className={`rule-item rule-item--accordion ${isOpen ? "is-open" : ""}`}>
+    <article
+      className={`rule-item rule-item--accordion ${isAlternatingTone ? "rule-item--alternate" : ""} ${isOpen ? "is-open" : ""}`.trim()}
+    >
       <button
         type="button"
         className="rule-item__toggle"
