@@ -26,7 +26,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/icon.ico"]
+    "targets": ["nsis", "msi"],
+    "publisher": "Asier Gonzalez",
+    "homepage": "https://github.com/asier-toraya",
+    "shortDescription": "Desktop network visibility with explainable risk scoring for Windows hosts.",
+    "longDescription": "Nyx Net Sentinel is a Windows-first desktop application built with Tauri, React and Rust to monitor live connections, enrich them with process and destination context, and help analysts triage network activity with clear, explainable risk scoring.",
+    "copyright": "Copyright © 2026 Asier Gonzalez",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser",
+        "startMenuFolder": "Nyx Net Sentinel"
+      },
+      "wix": {
+        "upgradeCode": "7f54cbc6-fd33-527f-95c3-f2c541c6adb1"
+      }
+    }
   }
 }
